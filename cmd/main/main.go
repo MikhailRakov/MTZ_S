@@ -100,7 +100,7 @@ func main() {
 	router.ServeFiles("/css/*filepath", http.Dir("front/css/"))
 	/////
 
-	//router.GET("/"/js/config/firebase-config.js"", serveFirebaseConfigJS)
+	//router.GET("//js/config/firebase-config.js", serveFirebaseConfigJS)
 
 	// Маршруты для HTML страниц
 	router.GET("/", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {

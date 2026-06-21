@@ -43,7 +43,7 @@ func initFirebase() {
 
 func serveFirebaseConfigJS(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 
-	http.ServeFile(w, r, ""/js/config/firebase-config.js"")
+	http.ServeFile(w, r, "/js/config/firebase-config.js")
 }
 
 // handleFirebaseTokenVerification проверяет ID токен, полученный от клиента
