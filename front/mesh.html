@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор Coarse.dat для AP3DMT</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .content {
+            padding: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .section h2::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+        }
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #555;
+            font-size: 13px;
+        }
+        input, select {
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #1565c0;
+        }
+        .layer-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            background: white;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .layer-table th, .layer-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        .layer-table th {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .layer-table tr:hover {
+            background: #f5f5f5;
+        }
+        .layer-table input {
+            width: 100%;
+            padding: 6px;
+        }
+        .anomaly-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #e0e0e0;
+        }
+        .anomaly-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .anomaly-title {
+            font-weight: 600;
+            color: #667eea;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .btn-success {
+            background: #28a745;
+            color: white;
+            font-size: 18px;
+            padding: 15px 30px;
+            width: 100%;
+        }
+        .btn-success:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
+        }
+        .preview {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow: auto;
+            white-space: pre;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .stat-box {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border: 2px solid #e0e0e0;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #777;
+            margin-top: 5px;
+        }
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-weight: 600;
+            color: #777;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .helper {
+            font-size: 12px;
+            color: #888;
+            margin-top: 3px;
+        }
+        @media (max-width: 768px) {
+            .grid-3, .grid-2, .stats {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔬 Генератор Coarse.dat</h1>
+            <p>Создание файла 3D-сетки для программы AP3DMT</p>
+        </div>
+        
+        <div class="content">
+            <!-- Секция 1: Параметры сетки -->
+            <div class="section">
+                <h2>Параметры сетки</h2>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label>Количество блоков по X (NX)</label>
+                        <input type="number" id="nx" min="1" value="44" onchange="updateLayers()">
+                        <span class="helper">Горизонтальная ось</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Количество блоков по Y (NY)</label>
+                        <input type="number" id="ny" min="1" value="42" onchange="updateLayers()">
+                        <span class="helper">Горизонтальная ось</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Количество слоёв по Z (NZ)</label>
+                        <input type="number" id="nz" min="1" value="59" onchange="updateLayers()">
+                        <span class="helper">Вертикальная ось (глубина)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Секция 2: Размеры ячеек -->
+            <div class="section">
+                <h2>Размеры ячеек (метры)</h2>
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab('uniform')">Одинаковые</button>
+                    <button class="tab" onclick="switchTab('padding')">Со сгущением (padding)</button>
+                    <button class="tab" onclick="switchTab('custom')">Произвольные</button>
+                </div>
+
+                <div id="tab-uniform" class="tab-content active">
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>Размер по X (м)</label>
+                            <input type="number" id="xSizeUniform" value="30000" step="1000">
+                        </div>
+                        <div class="form-group">
+                            <label>Размер по Y (м)</label>
+                            <input type="number" id="ySizeUniform" value="60000" step="1000">
+                        </div>
+                        <div class="form-group">
+                            <label>Размер по Z (м)</label>
+                            <input type="number" id="zSizeUniform" value="500" step="100">
+                        </div>
+                    </div>
+                    <div class="info-box">
+                        💡 Все ячейки будут одинакового размера.
+                    </div>
+                </div>
+
+                <div id="tab-padding" class="tab-content">
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>Центральный размер по X (м)</label>
+                            <input type="number" id="xCenterSize" value="30000" step="1000">
+                        </div>
+                        <div class="form-group">
+                            <label>Центральный размер по Y (м)</label>
+                            <input type="number" id="yCenterSize" value="60000" step="1000">
+                        </div>
+                        <div class="form-group">
+                            <label>Мин. размер по Z (м, у поверхности)</label>
+                            <input type="number" id="zMinSize" value="500" step="50">
+                        </div>
+                    </div>
+                    <div class="grid-3" style="margin-top: 10px;">
+                        <div class="form-group">
+                            <label>Фактор увеличения X</label>
+                            <input type="number" id="xFactor" value="1.2" step="0.05" min="1">
+                            <span class="helper">Каждая следующая ячейка крупнее</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Фактор увеличения Y</label>
+                            <input type="number" id="yFactor" value="1.2" step="0.05" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Фактор увеличения Z</label>
+                            <input type="number" id="zFactor" value="1.3" step="0.05" min="1">
+                            <span class="helper">Увеличение с глубиной</span>
+                        </div>
+                    </div>
+                    <div class="info-box">
+                        💡 Мелкие ячейки в центре (область интереса), крупные по краям (padding).
+                    </div>
+                </div>
+
+                <div id="tab-custom" class="tab-content">
+                    <div class="info-box">
+                        💡 Введите размеры через пробел. Количество значений должно совпадать с NX/NY/NZ.
+                    </div>
+                    <div class="form-group" style="margin-top: 10px;">
+                        <label>Размеры по X (<span id="xCount">44</span> значений)</label>
+                        <textarea id="xCustom" rows="2" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; font-family: monospace;"></textarea>
+                    </div>
+                    <div class="form-group" style="margin-top: 10px;">
+                        <label>Размеры по Y (<span id="yCount">42</span> значений)</label>
+                        <textarea id="yCustom" rows="2" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; font-family: monospace;"></textarea>
+                    </div>
+                    <div class="form-group" style="margin-top: 10px;">
+                        <label>Размеры по Z (<span id="zCount">59</span> значений)</label>
+                        <textarea id="zCustom" rows="2" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; font-family: monospace;"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Секция 3: Удельное сопротивление -->
+            <div class="section">
+                <h2>Удельное сопротивление (Ом·м)</h2>
+                <div class="tabs">
+                    <button class="tab active" onclick="switchResTab('uniform')">Одно значение</button>
+                    <button class="tab" onclick="switchResTab('layers')">По слоям</button>
+                    <button class="tab" onclick="switchResTab('anomalies')">С аномалиями</button>
+                </div>
+
+                <div id="res-uniform" class="tab-content active">
+                    <div class="form-group">
+                        <label>Удельное сопротивление для всех блоков (Ом·м)</label>
+                        <input type="number" id="rhoUniform" value="100" step="1" min="0.1">
+                    </div>
+                </div>
+
+                <div id="res-layers" class="tab-content">
+                    <div class="info-box">
+                        💡 Задайте сопротивление для каждого слоя по глубине (Z).
+                    </div>
+                    <div style="max-height: 400px; overflow-y: auto; margin-top: 10px;">
+                        <table class="layer-table" id="layerTable">
+                            <thead>
+                                <tr>
+                                    <th>Слой (Z)</th>
+                                    <th>Глубина от (м)</th>
+                                    <th>Глубина до (м)</th>
+                                    <th>Сопротивление (Ом·м)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="layerTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="res-anomalies" class="tab-content">
+                    <div class="form-group">
+                        <label>Базовое сопротивление фона (Ом·м)</label>
+                        <input type="number" id="rhoBackground" value="100" step="1" min="0.1">
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <strong>Аномалии (области с другим сопротивлением):</strong>
+                            <button class="btn-primary" onclick="addAnomaly()">+ Добавить аномалию</button>
+                        </div>
+                        <div id="anomaliesList"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Статистика -->
+            <div class="section">
+                <h2>Статистика модели</h2>
+                <div class="stats">
+                    <div class="stat-box">
+                        <div class="stat-value" id="statBlocks">0</div>
+                        <div class="stat-label">Всего блоков</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="statSizeX">0 м</div>
+                        <div class="stat-label">Размер по X</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="statSizeY">0 м</div>
+                        <div class="stat-label">Размер по Y</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="statSizeZ">0 м</div>
+                        <div class="stat-label">Размер по Z</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Предпросмотр -->
+            <div class="section">
+                <h2>Предпросмотр файла</h2>
+                <button class="btn-secondary" onclick="generatePreview()" style="margin-bottom: 10px;">
+                    👁️ Обновить предпросмотр
+                </button>
+                <div class="preview" id="preview">Нажмите "Обновить предпросмотр" для генерации...</div>
+            </div>
+
+            <!-- Кнопка генерации -->
+            <button class="btn-success" onclick="downloadFile()">
+                💾 Сгенерировать и скачать Coarse.dat
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let currentSizeTab = 'uniform';
+        let currentResTab = 'uniform';
+        let anomalies = [];
+        let anomalyCounter = 0;
+
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', () => {
+            updateLayers();
+            updateCounts();
+        });
+
+        // Переключение вкладок размеров
+        function switchTab(tab) {
+            currentSizeTab = tab;
+            document.querySelectorAll('.section:nth-of-type(2) .tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.section:nth-of-type(2) .tab-content').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tab-' + tab).classList.add('active');
+        }
+
+        // Переключение вкладок сопротивления
+        function switchResTab(tab) {
+            currentResTab = tab;
+            document.querySelectorAll('.section:nth-of-type(3) .tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.section:nth-of-type(3) .tab-content').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('res-' + tab).classList.add('active');
+            if (tab === 'layers') updateLayerTable();
+        }
+
+        // Обновление количества
+        function updateCounts() {
+            const nx = parseInt(document.getElementById('nx').value) || 0;
+            const ny = parseInt(document.getElementById('ny').value) || 0;
+            const nz = parseInt(document.getElementById('nz').value) || 0;
+            document.getElementById('xCount').textContent = nx;
+            document.getElementById('yCount').textContent = ny;
+            document.getElementById('zCount').textContent = nz;
+        }
+
+        // Обновление таблицы слоёв
+        function updateLayers() {
+            updateCounts();
+            if (currentResTab === 'layers') updateLayerTable();
+            updateStats();
+        }
+
+        function updateLayerTable() {
+            const nz = parseInt(document.getElementById('nz').value) || 0;
+            const tbody = document.getElementById('layerTableBody');
+            tbody.innerHTML = '';
+            
+            const zSizes = getZSizes();
+            let depth = 0;
+            
+            for (let i = 0; i < nz; i++) {
+                const depthFrom = depth.toFixed(1);
+                const depthTo = (depth + zSizes[i]).toFixed(1);
+                depth += zSizes[i];
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><strong>${i + 1}</strong></td>
+                    <td>${depthFrom}</td>
+                    <td>${depthTo}</td>
+                    <td><input type="number" class="layer-rho" value="100" step="1" min="0.1" onchange="updateStats()"></td>
+                `;
+                tbody.appendChild(row);
+            }
+        }
+
+        // Аномалии
+        function addAnomaly() {
+            anomalyCounter++;
+            const id = anomalyCounter;
+            anomalies.push({
+                id: id,
+                x1: 1, x2: 5,
+                y1: 1, y2: 5,
+                z1: 1, z2: 5,
+                rho: 50
+            });
+            renderAnomalies();
+        }
+
+        function removeAnomaly(id) {
+            anomalies = anomalies.filter(a => a.id !== id);
+            renderAnomalies();
+        }
+
+        function renderAnomalies() {
+            const list = document.getElementById('anomaliesList');
+            list.innerHTML = '';
+            
+            anomalies.forEach(a => {
+                const div = document.createElement('div');
+                div.className = 'anomaly-item';
+                div.innerHTML = `
+                    <div class="anomaly-header">
+                        <span class="anomaly-title">Аномалия #${a.id}</span>
+                        <button class="btn-danger" onclick="removeAnomaly(${a.id})">Удалить</button>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label>X от (блок)</label>
+                            <input type="number" value="${a.x1}" min="1" onchange="updateAnomaly(${a.id}, 'x1', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>X до (блок)</label>
+                            <input type="number" value="${a.x2}" min="1" onchange="updateAnomaly(${a.id}, 'x2', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>Сопротивление (Ом·м)</label>
+                            <input type="number" value="${a.rho}" step="1" min="0.1" onchange="updateAnomaly(${a.id}, 'rho', this.value)">
+                        </div>
+                    </div>
+                    <div class="grid-3" style="margin-top: 10px;">
+                        <div class="form-group">
+                            <label>Y от (блок)</label>
+                            <input type="number" value="${a.y1}" min="1" onchange="updateAnomaly(${a.id}, 'y1', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>Y до (блок)</label>
+                            <input type="number" value="${a.y2}" min="1" onchange="updateAnomaly(${a.id}, 'y2', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>Z от → до (слой)</label>
+                            <div style="display: flex; gap: 5px;">
+                                <input type="number" value="${a.z1}" min="1" style="flex: 1;" onchange="updateAnomaly(${a.id}, 'z1', this.value)">
+                                <input type="number" value="${a.z2}" min="1" style="flex: 1;" onchange="updateAnomaly(${a.id}, 'z2', this.value)">
+                            </div>
+                        </div>
+                    </div>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function updateAnomaly(id, field, value) {
+            const anomaly = anomalies.find(a => a.id === id);
+            if (anomaly) {
+                anomaly[field] = parseFloat(value) || 1;
+            }
+        }
+
+        // Получение размеров ячеек
+        function getXSizes() {
+            const nx = parseInt(document.getElementById('nx').value) || 1;
+            
+            if (currentSizeTab === 'uniform') {
+                const size = parseFloat(document.getElementById('xSizeUniform').value) || 1000;
+                return Array(nx).fill(size);
+            } else if (currentSizeTab === 'padding') {
+                return generatePaddingSizes(nx, 
+                    parseFloat(document.getElementById('xCenterSize').value) || 1000,
+                    parseFloat(document.getElementById('xFactor').value) || 1.2);
+            } else {
+                return parseCustomSizes(document.getElementById('xCustom').value, nx);
+            }
+        }
+
+        function getYSizes() {
+            const ny = parseInt(document.getElementById('ny').value) || 1;
+            
+            if (currentSizeTab === 'uniform') {
+                const size = parseFloat(document.getElementById('ySizeUniform').value) || 1000;
+                return Array(ny).fill(size);
+            } else if (currentSizeTab === 'padding') {
+                return generatePaddingSizes(ny, 
+                    parseFloat(document.getElementById('yCenterSize').value) || 1000,
+                    parseFloat(document.getElementById('yFactor').value) || 1.2);
+            } else {
+                return parseCustomSizes(document.getElementById('yCustom').value, ny);
+            }
+        }
+
+        function getZSizes() {
+            const nz = parseInt(document.getElementById('nz').value) || 1;
+            
+            if (currentSizeTab === 'uniform') {
+                const size = parseFloat(document.getElementById('zSizeUniform').value) || 500;
+                return Array(nz).fill(size);
+            } else if (currentSizeTab === 'padding') {
+                return generateIncreasingSizes(nz,
+                    parseFloat(document.getElementById('zMinSize').value) || 500,
+                    parseFloat(document.getElementById('zFactor').value) || 1.3);
+            } else {
+                return parseCustomSizes(document.getElementById('zCustom').value, nz);
+            }
+        }
+
+        function generatePaddingSizes(n, centerSize, factor) {
+            if (n === 1) return [centerSize];
+            const sizes = [];
+            const half = Math.floor(n / 2);
+            
+            // Правая половина (от центра к краю)
+            const rightHalf = [];
+            let current = centerSize;
+            for (let i = 0; i < half; i++) {
+                rightHalf.push(current);
+                current *= factor;
+            }
+            
+            // Левая половина (зеркально)
+            const leftHalf = [...rightHalf].reverse();
+            
+            // Собираем
+            if (n % 2 === 0) {
+                sizes.push(...leftHalf, ...rightHalf);
+            } else {
+                sizes.push(...leftHalf, centerSize, ...rightHalf);
+            }
+            
+            return sizes.slice(0, n);
+        }
+
+        function generateIncreasingSizes(n, minSize, factor) {
+            const sizes = [];
+            let current = minSize;
+            for (let i = 0; i < n; i++) {
+                sizes.push(current);
+                current *= factor;
+            }
+            return sizes;
+        }
+
+        function parseCustomSizes(text, expectedCount) {
+            const values = text.trim().split(/[\s,]+/).map(v => parseFloat(v)).filter(v => !isNaN(v));
+            if (values.length === 0) return Array(expectedCount).fill(1000);
+            if (values.length === 1) return Array(expectedCount).fill(values[0]);
+            // Если значений меньше, чем нужно - дополняем последним
+            while (values.length < expectedCount) {
+                values.push(values[values.length - 1]);
+            }
+            return values.slice(0, expectedCount);
+        }
+
+        // Получение значения сопротивления для блока
+        function getResistivity(ix, iy, iz) {
+            const nx = parseInt(document.getElementById('nx').value) || 1;
+            const ny = parseInt(document.getElementById('ny').value) || 1;
+            const nz = parseInt(document.getElementById('nz').value) || 1;
+            
+            if (currentResTab === 'uniform') {
+                return parseFloat(document.getElementById('rhoUniform').value) || 100;
+            } else if (currentResTab === 'layers') {
+                const inputs = document.querySelectorAll('.layer-rho');
+                if (inputs[iz]) {
+                    return parseFloat(inputs[iz].value) || 100;
+                }
+                return 100;
+            } else if (currentResTab === 'anomalies') {
+                let rho = parseFloat(document.getElementById('rhoBackground').value) || 100;
+                
+                // Проверяем аномалии (последняя имеет приоритет)
+                for (const a of anomalies) {
+                    if (ix + 1 >= a.x1 && ix + 1 <= a.x2 &&
+                        iy + 1 >= a.y1 && iy + 1 <= a.y2 &&
+                        iz + 1 >= a.z1 && iz + 1 <= a.z2) {
+                        rho = a.rho;
+                    }
+                }
+                return rho;
+            }
+            return 100;
+        }
+
+        // Генерация содержимого файла
+        function generateFileContent() {
+            const nx = parseInt(document.getElementById('nx').value) || 1;
+            const ny = parseInt(document.getElementById('ny').value) || 1;
+            const nz = parseInt(document.getElementById('nz').value) || 1;
+            
+            const xSizes = getXSizes();  // Размеры ячеек X (не координаты!)
+            const ySizes = getYSizes();  // Размеры ячеек Y
+            const zSizes = getZSizes();  // Размеры ячеек Z
+            
+            let content = '';
+            
+            // Заголовок (2 строки)
+            content += `Coarse model written by User 2026\n`;
+            content += `${nx} ${ny} ${nz} 0   LINEAR\n`;
+            
+            // Размеры ячеек X (NX значений - РАЗМЕРЫ, не координаты!)
+            content += xSizes.map(s => s.toFixed(2)).join(' ') + '\n';
+            
+            // Размеры ячеек Y (NY значений)
+            content += ySizes.map(s => s.toFixed(2)).join(' ') + '\n';
+            
+            // Размеры ячеек Z (NZ значений)
+            content += zSizes.map(s => s.toFixed(2)).join(' ') + '\n';
+            
+            // Сопротивления (с пустыми строками между слоями Z)
+            for (let iz = 0; iz < nz; iz++) {
+                for (let iy = 0; iy < ny; iy++) {
+                    const row = [];
+                    for (let ix = 0; ix < nx; ix++) {
+                        const rho = getResistivity(ix, iy, iz);
+                        row.push(`+${rho.toFixed(5)}E+02`);
+                    }
+                    content += row.join(' ') + '\n';
+                }
+                // Пустая строка между слоями Z (кроме последнего)
+                if (iz < nz - 1) {
+                    content += '\n';
+                }
+            }
+    
+                // Последняя строка с координатами центра модели
+                // Это смещение центра модели (можно оставить 0, 0, 0)
+                const totalX = xSizes.reduce((a, b) => a + b, 0);
+                const totalY = ySizes.reduce((a, b) => a + b, 0);
+                const totalZ = zSizes.reduce((a, b) => a + b, 0);
+                
+                // Центр модели (отрицательные координаты = смещение от начала)
+                content += `${(-totalX/2).toFixed(2)} ${(-totalY/2).toFixed(2)} 0.00\n`;
+                
+                return content;
+        }
+
+        // Предпросмотр
+        function generatePreview() {
+            const content = generateFileContent();
+            const lines = content.split('\n');
+            const preview = lines.slice(0, 50).join('\n');
+            const remaining = lines.length - 50;
+            
+            document.getElementById('preview').textContent = 
+                preview + 
+                (remaining > 0 ? `\n\n... ещё ${remaining} строк ...` : '');
+            
+            updateStats();
+        }
+
+        // Статистика
+        function updateStats() {
+            const nx = parseInt(document.getElementById('nx').value) || 0;
+            const ny = parseInt(document.getElementById('ny').value) || 0;
+            const nz = parseInt(document.getElementById('nz').value) || 0;
+            
+            const xSizes = getXSizes();
+            const ySizes = getYSizes();
+            const zSizes = getZSizes();
+            
+            const totalBlocks = nx * ny * nz;
+            const sizeX = xSizes.reduce((a, b) => a + b, 0);
+            const sizeY = ySizes.reduce((a, b) => a + b, 0);
+            const sizeZ = zSizes.reduce((a, b) => a + b, 0);
+            
+            document.getElementById('statBlocks').textContent = totalBlocks.toLocaleString();
+            document.getElementById('statSizeX').textContent = formatSize(sizeX);
+            document.getElementById('statSizeY').textContent = formatSize(sizeY);
+            document.getElementById('statSizeZ').textContent = formatSize(sizeZ);
+        }
+
+        function formatSize(meters) {
+            if (meters >= 1000) {
+                return (meters / 1000).toFixed(1) + ' км';
+            }
+            return meters.toFixed(0) + ' м';
+        }
+
+        // Скачивание файла
+        function downloadFile() {
+            const content = generateFileContent();
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'Coarse.dat';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            // Показываем уведомление
+            alert('✅ Файл Coarse.dat успешно сгенерирован и скачан!');
+        }
+    </script>
+</body>
+</html>
