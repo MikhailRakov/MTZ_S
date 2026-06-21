@@ -10,7 +10,7 @@ import (
 func initRabbitMQ() {
 	logger := logging.GetLogger()
 	// TODO: Получить адрес из конфига
-	uri := os.Getenv("RabbitMQ_URL")
+	uri := os.Getenv("RABBITMQ_URL")
 
 	var err error
 	rabbitConn, err = amqp.Dial(uri)
