@@ -1,0 +1,39 @@
+<!-- front/index.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мое приложение</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Мое приложение</h1>
+        <p>Проверка аутентификации...</p>
+        <div id="redirect-message">Перенаправление...</div>
+    </div>
+
+    <script src="/internal/middleware/firebase/firebase-config.js"></script>
+    
+    <script>
+        // Инициализация Firebase
+        if (typeof firebaseConfig !== 'undefined') {
+            firebase.initializeApp(firebaseConfig);
+        }
+
+        // Проверяем состояние аутентификации и перенаправляем
+        firebase.auth().onAuthStateChanged((user) => {
+            if (user) {
+                // Пользователь вошел - перенаправляем на dashboard
+                window.location.href = '/dashboard.html';
+            } else {
+                // Пользователь не вошел - перенаправляем на login
+                window.location.href = '/login.html';
+            }
+        });
+    </script>
+</body>
+</html>

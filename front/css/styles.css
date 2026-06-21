@@ -1,0 +1,628 @@
+/* front/css/styles.css */
+
+/* --- Базовые стили для всего тела страницы --- */
+body {
+    font-family: Arial, sans-serif;
+    color: white;
+    background-color: #2B2B31;
+    height: 100%;
+    overflow: hidden;
+}
+
+.modal {
+    display: block;
+    position: fixed;
+    /* Уже правильно */
+    z-index: 1002;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+    /* Добавим эти свойства для лучшего контроля */
+    box-sizing: border-box;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background-color: #1D1D20;
+    margin: 10% auto;
+    padding: 20px;
+    border: 1px solid #1A9FFF;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 500px;
+    position: relative;
+    /* Добавим эти свойства */
+    box-sizing: border-box;
+}
+/* Стили для виджета отправки в очередь */
+.widget {
+    margin-top: 20px;
+    padding: 15px;
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+    background-color: #f9f9f9;
+}
+
+#send-to-queue-btn {
+    background-color: #1a73e8; /* Голубой, отличный от других кнопок */
+    color: white;
+}
+
+#send-to-queue-btn:hover {
+    background-color: #1669d6;
+}
+
+#send-to-queue-btn:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+#queue-params {
+    width: 100%;
+    padding: 8px;
+    margin-top: 10px;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: monospace; /* Для JSON */
+}
+
+/* --- Стили для формы загрузки файла --- */
+.file-upload-section {
+    margin-top: 20px;
+    padding: 15px;
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+}
+
+#file-input {
+    margin-bottom: 10px;
+    padding: 5px;
+}
+
+#upload-btn {
+    /* Можно использовать существующие стили .btn */
+    /* Или добавить специфичные */
+    background-color: #34a853; /* Зеленоватый цвет */
+}
+
+#upload-btn:hover {
+    background-color: #2d9247;
+}
+
+.upload-progress {
+    margin-top: 10px;
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 20px;
+    background-color: #e0e0e0;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 5px;
+}
+
+.progress-bar {
+    height: 100%;
+    background-color: #4285f4;
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+.upload-message {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.upload-message.success {
+    background-color: #e6f4ea;
+    color: #34a853;
+}
+
+.upload-message.error {
+    background-color: #fce8e6;
+    color: #d93025;
+}
+
+.upload-message.info {
+    background-color: #e8f0fe;
+    color: #1a73e8;
+}
+
+.hidden {
+    display: none;
+}
+/* --- Конец стилей для формы загрузки файла --- */
+
+/* Кнопка закрытия */
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    position: absolute;
+    top: 10px;
+    right: 15px;
+}
+
+.close:hover,
+.close:focus {
+    color: black;
+    text-decoration: none;
+}
+
+/* Стили для формы в модальном окне */
+#create-solution-form {
+    margin-top: 20px;
+}
+
+#create-solution-form label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+#create-solution-form input[type="text"] {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+#create-solution-form button {
+    margin-right: 10px;
+}
+
+/* Стили для сообщений об ошибках */
+.error-message {
+    color: #d93025;
+    background-color: #fce8e6;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+.error-message.hidden {
+    display: none;
+}
+
+/* --- Стили Header'а --- */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background-color: #1D1D20;
+    border-bottom: 2px solid #1A9FFF;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    height: 70px;
+    box-sizing: border-box;
+}
+
+.solutions-scroll-container {
+    /* Ограничиваем высоту. Подберите значение под ваш дизайн. */
+    /* height: 300px; */
+    /* Фиксированная высота */
+    max-height: calc(100vh - 250px);
+    /* Максимальная высота: высота экрана минус примерная высота других элементов */
+
+    /* Добавляем прокрутку по вертикали, если содержимое не помещается */
+    overflow-x: hidden;
+
+    scrollbar-width: thin;
+    scrollbar-color: #1A9FFF #1D1D20;
+
+    width: 100%;
+    box-sizing: border-box;
+    /* Включаем padding/border в ширину/высоту */
+}
+
+/* Стили для списка решений внутри контейнера прокрутки */
+.solutions-list {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+    /* Отступ между кнопками */
+    /* Убираем margin-top, так как он теперь у контейнера прокрутки */
+    /* margin-top: 10px; */
+    /* Убедимся, что список занимает всю ширину контейнера прокрутки */
+    width: 100%;
+    margin: 0;
+    /* Убираем возможные внешние отступы */
+    padding: 0;
+    /* Убираем возможные внутренние отступы */
+}
+
+.solution-btn {
+    width: 95%;
+    color:#cccccc;
+    background-color:#3367d6;
+    border-color:white;
+    border-width: 2px;
+    border-radius: 4px;
+    height: 50px;
+    margin-left: 5px;
+}
+
+.header-title {
+    font-size: 22px;
+    font-weight: normal;
+    color: #5f6368;
+    margin: 0;
+}
+
+.user-profile {
+    position: relative;
+}
+
+.user-avatar {
+    width: 32px;
+    /* Фиксированная ширина */
+    height: 32px;
+    /* Фиксированная высота */
+    border-radius: 50%;
+    /* Делает форму круглой */
+    cursor: pointer;
+    background-color: #1a73e8;
+    /* Цвет фана, если нет изображения */
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 14px;
+    user-select: none;
+    /* Убедитесь, что аватар не растягивается */
+    flex-shrink: 0;
+    object-fit: cover;
+    /* Если внутри img, правильно масштабирует изображение */
+}
+
+/* Для изображения внутри маленького аватара */
+.user-avatar img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    /* Круглая форма для изображения */
+    object-fit: cover;
+    /* правильное масштабирование */
+    /* Убираем стандартные отступы у изображения */
+    display: block;
+    margin: 0;
+    padding: 0;
+}
+
+.profile-avatar {
+    width: 48px;
+    /* Фиксированная ширина */
+    height: 48px;
+    /* Фиксированная высота */
+    border-radius: 50%;
+    /* Круглая форма */
+    background-color: #1a73e8;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 18px;
+    margin-right: 12px;
+    flex-shrink: 0;
+    /* Не сжимается */
+    object-fit: cover;
+}
+
+/* Для изображения внутри большого аватара */
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    /* Круглая форма */
+    object-fit: cover;
+    /* Правильное масштабирование */
+    display: block;
+    margin: 0;
+    padding: 0;
+}
+
+/* --- Стили Dropdown профиля --- */
+.profile-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 280px;
+    background-color: #1D1D20;
+    border: 2px solid #1A9FFF;
+    border-radius: 8px;
+    box-shadow: 0 1px 2px 0 rgba(60, 64, 67, .30), 0 2px 6px 2px rgba(60, 64, 67, .15);
+    padding: 16px;
+    display: none;
+    z-index: 1001;
+    
+}
+
+.profile-dropdown.show {
+    display: block;
+}
+
+.profile-info {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.profile-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: #1a73e8;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 18px;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.profile-details {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.profile-name {
+    font-size: 16px;
+    font-weight: 500;
+    color: #1A9FFF;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.profile-email {
+    font-size: 14px;
+    color: #5f6368;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.logout-button {
+    width: 100%;
+    background-color: #f1f3f4;
+    color: #3c4043;
+    border: 1px solid #dadce0;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: center;
+    margin-top: 16px;
+    box-sizing: border-box;
+}
+
+.logout-button:hover {
+    background-color: #e8eaed;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, .1);
+}
+
+/* --- Стили основного контента (две колонки) --- */
+.main-content {
+    /* Учитываем фиксированную высоту header'а */
+    margin-top: 70px;
+    height: calc(100vh - 70px);
+    padding: 0;
+    background-color: transparent;
+    /* Используем Flexbox для двух колонок */
+    display: flex;
+}
+
+.dashboard-container {
+    width: 100%;
+    height: 100%;
+}
+
+.content-wrapper {
+    display: flex;
+    width: 100%;
+    height: 100%;
+}
+
+/* Левая колонка - боковая панель */
+.sidebar {
+    width: 25%;
+    /* Занимает 25% ширины */
+    background-color: #f5f5f5;
+    /* Фон для визуального отделения */
+    padding: 20px;
+    border-right: 1px solid #e0e0e0;
+    overflow-y: auto;
+    /* Добавляем прокрутку */
+    box-sizing: border-box;
+    /* Включаем padding в ширину */
+}
+
+/* Правая колонка - основная рабочая область */
+.main-area {
+    width: 75%;
+    /* Занимает 75% ширины */
+    padding: 20px;
+    overflow-y: auto;
+    /* Добавляем прокрутку */
+    box-sizing: border-box;
+    /* Включаем padding в ширину */
+    background-color: #ffffff;
+    /* Цвет фона основной области */
+}
+
+/* Стили для навигации в sidebar'е */
+.sidebar nav ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+
+.sidebar nav li {
+    margin-bottom: 10px;
+}
+
+.sidebar nav a {
+    text-decoration: none;
+    color: #5f6368;
+    display: block;
+    padding: 10px;
+    border-radius: 4px;
+    transition: background-color 0.2s, color 0.2s;
+    box-sizing: border-box;
+}
+
+.sidebar nav a:hover {
+    background-color: #e8eaed;
+}
+
+.sidebar nav a.active {
+    background-color: #e8f0fe;
+    color: #1a73e8;
+    font-weight: 500;
+}
+
+.block-left {
+    width: 20%;
+
+    background-color: #1D1D20;
+
+}
+
+.block-right {
+    width: 80%;
+    background-color: #2B2B31;
+
+
+}
+
+/* --- Адаптивность --- */
+@media (max-width: 768px) {
+    .content-wrapper {
+        flex-direction: column;
+        height: auto;
+    }
+
+    .sidebar,
+    .main-area {
+        width: 100%;
+        height: auto;
+    }
+
+    .sidebar {
+        border-right: none;
+        border-bottom: 1px solid #e0e0e0;
+    }
+}
+
+/* --- Конец стилей основного контента --- */
+/* Стили для кнопки загрузки файла */
+#upload-file-btn {
+    margin-top: 15px;
+    background-color: #34a853; /* Зеленоватый цвет, отличный от других кнопок */
+}
+
+#upload-file-btn:hover {
+    background-color: #2d9247;
+}
+
+
+
+/* Стили для статуса загрузки */
+.upload-status {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.upload-status.info {
+    background-color: #e8f0fe;
+    color: #1a73e8;
+}
+
+.upload-status.success {
+    background-color: #e6f4ea;
+    color: #34a853;
+}
+
+.upload-status.error {
+    background-color: #fce8e6;
+    color: #d93025;
+}
+
+.upload-status.hidden {
+    display: none;
+}
+
+/* --- Стили для других элементов (если используются в других частях приложения) --- */
+.container-login {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-items: center;
+
+}
+
+.btn {
+    background-color: #4285f4;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    margin: 10px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+.btn:hover {
+    background-color: #3367d6;
+}
+
+.user-info {
+    background-color: #e8f0fe;
+    padding: 20px;
+    border-radius: 4px;
+    margin: 20px 0;
+    text-align: left;
+}
+
+.hidden {
+    display: none;
+}
+
+/* --- Конец стилей для других элементов --- */

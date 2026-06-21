@@ -1,0 +1,642 @@
+// internal/user/handler.go
+package user
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"3dmtzinversionservice/internal/handlers" // Убедитесь, что путь правильный
+	"3dmtzinversionservice/pkg/logging"       // Убедитесь, что путь правильный
+
+	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/auth"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/julienschmidt/httprouter"
+	amqp "github.com/rabbitmq/amqp091-go"
+	///aws
+)
+
+// Убедитесь, что handler реализует интерфейс handlers.Handler
+var _ handlers.Handler = &handler{}
+
+// Константы для URL
+const (
+	getOrCreateUserURL = "/api/users/self"
+)
+
+// User представляет структуру документа пользователя в Firestore.
+type User struct {
+	UID         string  `firestore:"uid"`
+	Email       *string `firestore:"email,omitempty"`
+	DisplayName *string `firestore:"displayName,omitempty"`
+	PhotoURL    *string `firestore:"photoURL,omitempty"`
+	// Используем json:"-" для полей, которые устанавливаются сервером
+	CreatedAt    time.Time `firestore:"createdAt" json:"-"`
+	LastLoginAt  time.Time `firestore:"lastLoginAt" json:"-"`
+	Subscription struct {
+		LastResetDate time.Time `firestore:"lastResetDate"`
+	} `firestore:"subscription"`
+	// Inversions будет подколлекцией
+}
+
+// handler реализует логику обработки запросов для пользователей.
+type handler struct {
+	logger      *logging.Logger
+	firebaseApp *firebase.App // Добавляем зависимость от Firebase App
+	authClient  *auth.Client  // Добавляем зависимость от Auth Client
+	rabbitCh    *amqp.Channel
+	s3Client    *s3.Client
+}
+
+// NewHandler создает новый экземпляр handler.
+// Мы передаем зависимости через конструктор.
+func NewHandler(logger *logging.Logger, firebaseApp *firebase.App, authClient *auth.Client, rabbitCh *amqp.Channel, s3Client *s3.Client) handlers.Handler {
+	return &handler{
+		logger:      logger,
+		firebaseApp: firebaseApp, // Сохраняем зависимости
+		authClient:  authClient,  //
+		rabbitCh:    rabbitCh,
+		s3Client:    s3Client,
+	}
+}
+
+// func (h *handler) SendToQueue(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// 	// 1. Получаем ID токена из заголовка Authorization
+// 	authHeader := r.Header.Get("Authorization")
+// 	if authHeader == "" {
+// 		http.Error(w, "Authorization header is required", http.StatusUnauthorized)
+// 		return
+// 	}
+
+// 	const bearerPrefix = "Bearer "
+// 	if !strings.HasPrefix(authHeader, bearerPrefix) {
+// 		http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
+// 		return
+// 	}
+
+// 	idTokenStr := authHeader[len(bearerPrefix):]
+// 	if idTokenStr == "" {
+// 		http.Error(w, "ID Token is required", http.StatusUnauthorized)
+// 		return
+// 	}
+
+// 	// 2. Проверяем токен с помощью Firebase Admin SDK Auth
+// 	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+// 	if err != nil {
+// 		h.logger.Errorf("Failed to verify ID token: %v", err)
+// 		http.Error(w, "Invalid ID token", http.StatusUnauthorized)
+// 		return
+// 	}
+
+// 	uid := token.UID
+// 	solutionID := ps.ByName("solutionID")
+// 	h.logger.Infof("Verified user token for UID (SendToQueue): %s, SolutionID: %s", uid, solutionID)
+
+// 	if solutionID == "" {
+// 		http.Error(w, "Solution ID is required", http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	// 3. (Опционально) Проверяем, существует ли решение у пользователя
+// 	// Это зависит от вашей логики. Можно пропустить, если очередь сама проверит.
+
+// 	// 4. Читаем тело запроса (может содержать дополнительные параметры)
+// 	var reqBody map[string]interface{}
+// 	if r.ContentLength > 0 {
+// 		body, err := io.ReadAll(r.Body)
+// 		if err != nil {
+// 			h.logger.Errorf("Failed to read request body: %v", err)
+// 			http.Error(w, "Bad request", http.StatusBadRequest)
+// 			return
+// 		}
+// 		defer r.Body.Close()
+
+// 		if err := json.Unmarshal(body, &reqBody); err != nil {
+// 			h.logger.Errorf("Failed to decode request JSON: %v", err)
+// 			http.Error(w, "Bad request: invalid JSON", http.StatusBadRequest)
+// 			return
+// 		}
+// 	}
+
+// 	// 5. Подготавливаем сообщение для отправки в RabbitMQ
+// 	message := map[string]interface{}{
+// 		"user_id":     uid,
+// 		"solution_id": solutionID,
+// 		"timestamp":   time.Now().Unix(), // Добавляем временную метку
+// 		// Можно добавить другие поля из reqBody, если нужно
+// 		"parameters": reqBody, // Передаем тело запроса как параметры
+// 	}
+
+// 	messageBody, err := json.Marshal(message)
+// 	if err != nil {
+// 		h.logger.Errorf("Failed to marshal message to JSON: %v", err)
+// 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+// 		return
+// 	}
+
+// 	// 6. Отправляем сообщение в очередь RabbitMQ
+// 	if h.rabbitCh == nil {
+// 		h.logger.Error("RabbitMQ channel is not initialized")
+// 		http.Error(w, "Internal server error: Messaging system unavailable", http.StatusInternalServerError)
+// 		return
+// 	}
+
+// 	err = h.rabbitCh.PublishWithContext(
+// 		r.Context(),
+// 		"",                  // exchange (по умолчанию)
+// 		"calculation_tasks", // routing key (имя очереди)
+// 		false,               // mandatory
+// 		false,               // immediate
+// 		amqp.Publishing{
+// 			ContentType: "application/json",
+// 			Body:        messageBody,
+// 		})
+// 	if err != nil {
+// 		h.logger.Errorf("Failed to publish message to RabbitMQ: %v", err)
+// 		http.Error(w, "Failed to send task to queue", http.StatusInternalServerError)
+// 		return
+// 	}
+
+// 	h.logger.Infof("Message sent to queue for user %s, solution %s", uid, solutionID)
+
+// 	// 7. Возвращаем успешный ответ
+// 	w.Header().Set("Content-Type", "application/json")
+// 	w.WriteHeader(http.StatusOK) // 200 OK
+// 	response := map[string]interface{}{
+// 		"status":      "success",
+// 		"message":     "Task sent to queue",
+// 		"user_id":     uid,
+// 		"solution_id": solutionID,
+// 	}
+// 	json.NewEncoder(w).Encode(response)
+// }
+
+func (h *handler) UploadSolutionFile1(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+
+	// 1. Получаем ID токена из заголовка Authorization
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, "Authorization header is required", http.StatusUnauthorized)
+		return
+	}
+
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
+		return
+	}
+
+	idTokenStr := authHeader[len(bearerPrefix):]
+	if idTokenStr == "" {
+		http.Error(w, "ID Token is required", http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Проверяем токен с помощью Firebase Admin SDK Auth
+	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+	if err != nil {
+		h.logger.Errorf("Failed to verify ID token: %v", err)
+		http.Error(w, "Invalid ID token", http.StatusUnauthorized)
+		return
+	}
+
+	uid := token.UID
+	solutionID := ps.ByName("solutionID")
+	h.logger.Infof("Verified user token for UID (UploadFile): %s, SolutionID: %s", uid, solutionID)
+
+	if solutionID == "" {
+		http.Error(w, "Solution ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Ограничиваем размер тела запроса (например, 32 МБ)
+	const maxUploadSize int64 = 32 << 20 // 32 MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		h.logger.Errorf("Failed to parse multipart form (too large?): %v", err)
+		http.Error(w, "File too large or invalid form", http.StatusBadRequest)
+		return
+	}
+
+	// 4. Получаем файл из формы
+	file, fileHeader, err := r.FormFile("file") // Ключ "file" из FormData
+	if err != nil {
+		h.logger.Errorf("Failed to get file from form: %v", err)
+		http.Error(w, "Failed to get file from request", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// 5. Проверяем имя файла и расширение
+	filename := fileHeader.Filename
+	if filename == "" {
+		http.Error(w, "Filename is missing", http.StatusBadRequest)
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != ".zip" {
+		http.Error(w, "Only .zip files are allowed", http.StatusBadRequest)
+		return
+	}
+	filename = uid + solutionID
+	h.logger.Infof("File %s uploaded successfully for user %s, solution %s ", filename, uid, solutionID)
+
+	// 10. Возвращаем успешный ответ
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated) // 201 Created
+	response := map[string]interface{}{
+		"message":  "File uploaded successfully",
+		"filename": filename, // Или относительный путь, если нужно
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Errorf("Failed to encode response JSON: %v", err)
+		// Заголовки уже отправлены, ничего не поделаешь
+	}
+}
+func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// 1. Получаем ID токена из заголовка Authorization
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, "Authorization header is required", http.StatusUnauthorized)
+		return
+	}
+
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
+		return
+	}
+
+	idTokenStr := authHeader[len(bearerPrefix):]
+	if idTokenStr == "" {
+		http.Error(w, "ID Token is required", http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Проверяем токен с помощью Firebase Admin SDK Auth
+	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+	if err != nil {
+		h.logger.Errorf("Failed to verify ID token: %v", err)
+		http.Error(w, "Invalid ID token", http.StatusUnauthorized)
+		return
+	}
+
+	uid := token.UID
+	solutionID := ps.ByName("solutionID")
+	h.logger.Infof("Verified user token for UID (UploadFile): %s, SolutionID: %s", uid, solutionID)
+
+	if solutionID == "" {
+		http.Error(w, "Solution ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Ограничиваем размер тела запроса (например, 32 МБ)
+	const maxUploadSize int64 = 32 << 20 // 32 MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		h.logger.Errorf("Failed to parse multipart form (too large?): %v", err)
+		http.Error(w, "File too large or invalid form", http.StatusBadRequest)
+		return
+	}
+
+	// 4. Получаем файл из формы
+	file, fileHeader, err := r.FormFile("file") // Ключ "file" из FormData
+	if err != nil {
+		h.logger.Errorf("Failed to get file from form: %v", err)
+		http.Error(w, "Failed to get file from request", http.StatusBadRequest)
+		return
+	}
+	defer file.Close() // ВАЖНО: Закрываем файл после использования
+
+	// 5. Проверяем имя файла и расширение
+	filename := fileHeader.Filename
+	if filename == "" {
+		http.Error(w, "Filename is missing", http.StatusBadRequest)
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != ".zip" {
+		http.Error(w, "Only .zip files are allowed", http.StatusBadRequest)
+		return
+	}
+	if h.s3Client == nil {
+		h.logger.Error("S3 client is not initialized in UploadSolutionFile")
+		http.Error(w, "Internal server error: S3 client not available", http.StatusInternalServerError)
+		return
+	}
+
+	if h.rabbitCh == nil {
+		h.logger.Error("RabbitMQ channel is not initialized in UploadSolutionFile")
+		http.Error(w, "Internal server error: RabbitMQ channel not available", http.StatusInternalServerError)
+		return
+	}
+
+	s3Key := fmt.Sprintf("users/%s/solutions/%s/%s", uid, solutionID, filename)
+
+	// Читаем содержимое файла в память (для PutObject)
+	// ВНИМАНИЕ: Для больших файлов лучше использовать UploadManager или stream
+	fileBytes, err := io.ReadAll(file) // file уже открыт из FormFile
+	if err != nil {
+		h.logger.Errorf("Failed to read file contents: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	h.logger.Infof("S3 Bucket: %s", os.Getenv("AWS_S3_BUCKET_NAME"))
+	// Подготовим параметры для PutObject
+	putObjectInput := &s3.PutObjectInput{
+		Bucket: aws.String(os.Getenv("AWS_S3_BUCKET_NAME")), // Используем переменную из .env
+		Key:    aws.String(s3Key),
+		Body:   bytes.NewReader(fileBytes), // Передаем содержимое файла
+		// ACL:  types.ObjectCannedACL("private"), // Установите ACL по необходимости
+	}
+
+	// Выполним PutObject
+	_, err = h.s3Client.PutObject(r.Context(), putObjectInput)
+	if err != nil {
+		h.logger.Errorf("Failed to upload file to S3: %v", err)
+		http.Error(w, "Failed to upload file to S3", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Infof("File %s uploaded to S3 successfully for user %s, solution %s (key: %s)", filename, uid, solutionID, s3Key)
+	// --- КОНЕЦ НОВОГО ---
+
+	// --- НОВОЕ: Отправка ключа в очередь RabbitMQ ---
+	// Подготавливаем сообщение
+	message := map[string]interface{}{
+		"user_id":     uid,
+		"solution_id": solutionID,
+		"s3_file_key": s3Key, // <-- Ключ S3 отправляется в очередь
+		"timestamp":   time.Now().Unix(),
+	}
+
+	messageBody, err := json.Marshal(message)
+	if err != nil {
+		h.logger.Errorf("Failed to marshal message to JSON: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Отправляем сообщение в очередь
+	if h.rabbitCh == nil {
+		h.logger.Error("RabbitMQ channel is not initialized")
+		http.Error(w, "Internal server error: Messaging system unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	err = h.rabbitCh.PublishWithContext(
+		r.Context(),
+		"",
+		"calculation_tasks", // routing key (имя вашей очереди)
+		false,               // mandatory
+		false,               // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        messageBody,
+		})
+	if err != nil {
+		h.logger.Errorf("Failed to publish message to RabbitMQ: %v", err)
+		http.Error(w, "Failed to send task to queue", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Infof("S3 file key message sent to queue for user %s, solution %s, key: %s", uid, solutionID, s3Key)
+	// --- КОНЕЦ НОВОГО ---
+
+	// 10. Возвращаем успешный ответ клиенту
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated) // 201 Created
+	response := map[string]interface{}{
+		"message":  "File uploaded to S3 and task sent to queue successfully", // Изменено сообщение
+		"filename": filename,
+		"s3_key":   s3Key, // Полезно вернуть ключ, если клиенту он нужен
+		// "size":     written, // Убрано, так как файл не сохраняется на диск
+		// "path":     fullPath, // Убрано
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Errorf("Failed to encode response JSON: %v", err)
+		// Заголовки уже отправлены
+	}
+}
+
+// GetDownloadURL генерирует presigned URL для скачивания файла из S3
+func (h *handler) GetDownloadURL(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// 1. Аутентификация
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error":"authorization header is required"}`, http.StatusUnauthorized)
+		return
+	}
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		http.Error(w, `{"error":"invalid authorization header format"}`, http.StatusUnauthorized)
+		return
+	}
+	idTokenStr := authHeader[len(bearerPrefix):]
+	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid id token"}`, http.StatusUnauthorized)
+		return
+	}
+	uid := token.UID
+
+	// 2. Получаем ключ файла из query-параметра
+	s3Key := r.URL.Query().Get("key")
+	if s3Key == "" {
+		http.Error(w, `{"error":"key parameter is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 3. Проверяем, что файл принадлежит пользователю
+	expectedPrefix := fmt.Sprintf("users/%s/", uid)
+	if !strings.HasPrefix(s3Key, expectedPrefix) {
+		h.logger.Warnf("User %s attempted to access unauthorized key: %s", uid, s3Key)
+		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+		return
+	}
+
+	// 4. Генерируем presigned URL (действует 15 минут)
+	presignClient := s3.NewPresignClient(h.s3Client)
+	presignedReq, err := presignClient.PresignGetObject(r.Context(), &s3.GetObjectInput{
+		Bucket: aws.String(os.Getenv("AWS_S3_BUCKET_NAME")),
+		Key:    aws.String(s3Key),
+	}, func(o *s3.PresignOptions) {
+		o.Expires = 15 * time.Minute
+	})
+	if err != nil {
+		h.logger.Errorf("Failed to generate presigned URL for %s: %v", s3Key, err)
+		http.Error(w, `{"error":"failed to generate download link"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 5. Возвращаем ссылку
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"download_url": presignedReq.URL,
+		"expires_in":   "900",
+	})
+}
+
+func (h *handler) GetSolutionFiles(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	solutionID := ps.ByName("solutionID")
+	if solutionID == "" {
+		http.Error(w, `{"error":"solution_id is required"}`, http.StatusBadRequest)
+		return
+	}
+	h.logger.Info("1")
+
+	// 🔐 1. ИЗВЛЕЧЕНИЕ ТОКЕНА (этого не хватало!)
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error":"authorization header is required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		http.Error(w, `{"error":"invalid authorization header format"}`, http.StatusUnauthorized)
+		return
+	}
+
+	idTokenStr := authHeader[len(bearerPrefix):]
+	if idTokenStr == "" {
+		http.Error(w, `{"error":"id token is required"}`, http.StatusUnauthorized)
+		return
+	}
+	h.logger.Info("2")
+	// 2. Проверка токена
+	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+	if err != nil {
+		h.logger.Errorf("Failed to verify ID token in GetSolutionFiles: %v", err)
+		http.Error(w, `{"error":"invalid id token"}`, http.StatusUnauthorized)
+		return
+	}
+	uid := token.UID
+	h.logger.Info("3")
+	// 3. Формируем префикс для поиска результатов
+	prefix := fmt.Sprintf("users/%s/solutions/%s/results/", uid, solutionID)
+	bucketName := os.Getenv("AWS_S3_BUCKET_NAME")
+
+	// 4. Запрашиваем список объектов из S3
+	listInput := &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(prefix),
+	}
+
+	result, err := h.s3Client.ListObjectsV2(r.Context(), listInput)
+	if err != nil {
+		h.logger.Errorf("Failed to list S3 objects for %s: %v", prefix, err)
+		http.Error(w, `{"error":"failed to list files"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 5. Преобразуем в удобный JSON
+	type FileInfo struct {
+		Name         string    `json:"name"`
+		Key          string    `json:"key"`
+		Size         int64     `json:"size"`
+		LastModified time.Time `json:"last_modified"`
+	}
+
+	var files []FileInfo
+	for _, obj := range result.Contents {
+		fileName := filepath.Base(*obj.Key)
+		files = append(files, FileInfo{
+			Name:         fileName,
+			Key:          *obj.Key,
+			Size:         *obj.Size,
+			LastModified: *obj.LastModified,
+		})
+	}
+
+	// 6. Отправляем ответ
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"solution_id": solutionID,
+		"files":       files,
+	})
+}
+
+func (h *handler) GetPresignedURL(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// 1. Аутентификация
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error":"authorization header is required"}`, http.StatusUnauthorized)
+		return
+	}
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		http.Error(w, `{"error":"invalid authorization header format"}`, http.StatusUnauthorized)
+		return
+	}
+	idTokenStr := authHeader[len(bearerPrefix):]
+	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid id token"}`, http.StatusUnauthorized)
+		return
+	}
+	uid := token.UID
+
+	// 2. Получаем S3-ключ из query-параметра (не из path!)
+	s3Key := r.URL.Query().Get("key")
+	if s3Key == "" {
+		http.Error(w, `{"error":"key parameter is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 3. Проверяем, что файл принадлежит пользователю
+	// Ключ должен начинаться с users/{uid}/
+	expectedPrefix := fmt.Sprintf("users/%s/", uid)
+	if !strings.HasPrefix(s3Key, expectedPrefix) {
+		h.logger.Warnf("User %s attempted to access unauthorized key: %s", uid, s3Key)
+		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+		return
+	}
+
+	// 4. Генерируем presigned URL (15 минут)
+	presignClient := s3.NewPresignClient(h.s3Client)
+	presignedReq, err := presignClient.PresignGetObject(r.Context(), &s3.GetObjectInput{
+		Bucket: aws.String(os.Getenv("AWS_S3_BUCKET_NAME")),
+		Key:    aws.String(s3Key),
+	}, func(o *s3.PresignOptions) {
+		o.Expires = 15 * time.Minute
+	})
+	if err != nil {
+		h.logger.Errorf("Failed to generate presigned URL for %s: %v", s3Key, err)
+		http.Error(w, `{"error":"failed to generate download link"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 5. Возвращаем ссылку
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"download_url": presignedReq.URL,
+		"expires_in":   "900",
+	})
+}
+
+// Register регистрирует маршруты для обработчиков.
+func (h *handler) Register(router *httprouter.Router) {
+	// === МАРШРУТЫ С :solutionID (должны быть вместе) ===
+	router.POST("/api/users/self/solutions/:solutionID/upload", h.UploadSolutionFile)
+	router.GET("/api/users/self/solutions/:solutionID/files", h.GetSolutionFiles)
+	router.GET("/api/users/self/solutions/:solutionID", h.GetSolutionByID)
+
+	// === ОБЩИЕ МАРШРУТЫ ===
+	router.GET("/api/users/self/solutions", h.GetSolutions)
+	router.POST("/api/users/self/solutions", h.CreateSolution)
+	router.POST(getOrCreateUserURL, h.GetOrCreateUser)
+
+	// === НОВЫЙ ПУТЬ ДЛЯ СКАЧИВАНИЯ (вне иерархии /solutions/:id) ===
+	// ❗ ВАЖНО: Этот маршрут НЕ должен содержать :solutionID,
+	// чтобы не конфликтовать с остальными
+	router.GET("/api/users/self/downloads/url", h.GetPresignedURL)
+}
