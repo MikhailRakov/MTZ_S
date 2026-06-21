@@ -1,6 +1,6 @@
 *.log
 .env
-*.json
+serviceAccountKey.json
 *.txt
 *.py
 .vscode

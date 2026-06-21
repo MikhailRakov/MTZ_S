@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	serviceAccountKeyFile = "serviceAccountKey.json"
+	serviceAccountKeyFile = "/app/serviceAccountKey.json"
 )
 
 var (

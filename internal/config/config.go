@@ -2,6 +2,7 @@ package config
 
 import (
 	"3dmtzinversionservice/pkg/logging"
+	"os"
 	"sync"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -26,7 +27,13 @@ func GetConfig_app() *Config {
 		logger.Info("read configuration")
 		instance = &Config{}
 
-		if err := cleanenv.ReadConfig("config.yml", instance); err != nil {
+		// Путь к конфигу: из env или дефолт
+		configPath := os.Getenv("CONFIG_PATH")
+		if configPath == "" {
+			configPath = "/app/config.yml"
+		}
+
+		if err := cleanenv.ReadConfig(configPath, instance); err != nil {
 			help, _ := cleanenv.GetDescription(instance, nil)
 			logger.Info("Reading error")
 			logger.Info(help)
