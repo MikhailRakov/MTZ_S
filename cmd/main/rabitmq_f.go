@@ -2,6 +2,7 @@ package main
 
 import (
 	"3dmtzinversionservice/pkg/logging"
+	"os"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -9,7 +10,7 @@ import (
 func initRabbitMQ() {
 	logger := logging.GetLogger()
 	// TODO: Получить адрес из конфига
-	uri := "amqp://guest:guest@10.42.0.65:5672/"
+	uri := os.Getenv("RabbitMQ_URL")
 
 	var err error
 	rabbitConn, err = amqp.Dial(uri)
