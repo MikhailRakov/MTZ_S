@@ -15,11 +15,15 @@ func initFirebase() {
 	logger := logging.GetLogger()
 
 	// Проверка существования файла (по желанию, но полезно)
-	if _, err := os.Stat(serviceAccountKeyFile); os.IsNotExist(err) {
-		logger.Fatalf("Firebase service account key file not found at: %s", serviceAccountKeyFile)
+	// Путь к ключу: из env или дефолт для контейнера
+	credPath := os.Getenv("FIREBASE_CREDENTIALS_PATH")
+	if credPath == "" {
+		credPath = "/app/serviceAccountKey.json" // дефолт для Docker
 	}
 
-	opt := option.WithCredentialsFile(serviceAccountKeyFile)
+	logger.Infof("Using Firebase credentials from: %s", credPath)
+
+	opt := option.WithCredentialsFile(credPath)
 	var err error
 
 	// Инициализация Firebase App
