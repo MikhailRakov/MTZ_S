@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -157,32 +158,6 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(20, time.Minute)
 	defer rateLimiter.Stop()
 	logger.Info("Rate limiter initialized: 20 requests per minute per user")
-
-	// Функция для извлечения userID из запроса
-	getUserID := func(r *http.Request) string {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			return ""
-		}
-
-		const bearerPrefix = "Bearer "
-		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			return ""
-		}
-
-		idToken := authHeader[len(bearerPrefix):]
-		if idToken == "" {
-			return ""
-		}
-
-		// Верифицируем токен и получаем UID
-		token, err := authClient.VerifyIDToken(context.Background(), idToken)
-		if err != nil {
-			return ""
-		}
-
-		return token.UID
-	}
 
 	logger.Info("register user handler")
 	handler := user.NewHandler(logger, firebaseApp, authClient, rabbitCh, s3Client)
