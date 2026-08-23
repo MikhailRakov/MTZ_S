@@ -4,3 +4,4 @@ serviceAccountKey.json
 *.txt
 *.py
 .vscode
+*.dat

@@ -12,6 +12,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-auth-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 
 <body>
@@ -61,9 +63,70 @@
             <div id="file-upload-section" class="file-upload-section hidden">
                 <h3>Загрузить входные данные</h3>
                 <p style="color: var(--color-text-secondary); margin-bottom: 16px;">
-                    Загрузите два файла с данными для начала расчёта обратной задачи
+                    Загрузите файл профилей и сгенерируйте coarse сетку или загрузите готовую
                 </p>
-                <form id="file-upload-form">
+
+                <!-- Coarse Generator Section -->
+                <div class="coarse-generator-section">
+                    <div class="generator-header">
+                        <h4 style="color: var(--color-primary); margin: 0;">📊 Генератор Coarse сетки</h4>
+                        <button type="button" id="toggle-generator-btn" class="btn-icon">▼</button>
+                    </div>
+
+                    <div id="generator-content" class="generator-content">
+                        <div class="generator-upload-area" id="profiles-upload-area">
+                            <div style="font-size: 3em; margin-bottom: 10px;">📁</div>
+                            <p><strong>Загрузите Profiles.dat</strong></p>
+                            <p style="font-size: 0.9em; color: var(--color-text-tertiary); margin-top: 8px;">
+                                Для автоматической генерации coarse сетки
+                            </p>
+                            <input type="file" id="profiles-file-input" accept=".dat" style="display: none;">
+                        </div>
+
+                        <div id="generator-controls" class="generator-controls hidden">
+                            <div class="controls-grid">
+                                <div class="control-group">
+                                    <label>X ячейки</label>
+                                    <input type="number" id="grid-nx" value="44" min="10" max="100">
+                                </div>
+                                <div class="control-group">
+                                    <label>Y ячейки</label>
+                                    <input type="number" id="grid-ny" value="42" min="10" max="100">
+                                </div>
+                                <div class="control-group">
+                                    <label>Z ячейки</label>
+                                    <input type="number" id="grid-nz" value="59" min="10" max="100">
+                                </div>
+                                <div class="control-group">
+                                    <label>Z первый слой (м)</label>
+                                    <input type="number" id="grid-z-first" value="500" min="100">
+                                </div>
+                            </div>
+
+                            <div id="profiles-info" class="profiles-info"></div>
+
+                            <button type="button" id="generate-coarse-btn" class="btn" style="width: 100%; margin-top: 16px;">
+                                🔧 Сгенерировать и посмотреть сетку
+                            </button>
+                        </div>
+
+                        <!-- 3D Visualization -->
+                        <div id="grid-visualization" class="grid-visualization hidden">
+                            <div class="viz-header">
+                                <h4 style="margin: 0; color: var(--color-primary);">🎯 3D Визуализация сетки</h4>
+                                <div class="viz-controls">
+                                    <button type="button" id="download-coarse-btn" class="btn btn-success btn-sm">💾 Скачать Coarse.dat</button>
+                                    <button type="button" id="use-generated-coarse-btn" class="btn btn-sm">✓ Использовать эту сетку</button>
+                                </div>
+                            </div>
+                            <div id="grid-canvas-container" class="grid-canvas"></div>
+                            <div id="grid-stats" class="grid-stats"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Traditional File Upload Form -->
+                <form id="file-upload-form" style="margin-top: 24px;">
                     <div style="display: flex; flex-direction: column; gap: 12px;">
                         <div>
                             <label style="display: block; margin-bottom: 8px;">Файл профилей (.dat)</label>
