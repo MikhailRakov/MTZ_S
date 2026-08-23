@@ -3,7 +3,7 @@ name: Deploy Dev to Server
 on:
   workflow_dispatch:
   push:
-    branches: [dev]
+    branches: [Dev]
     
 
 env:
