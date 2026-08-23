@@ -1,360 +1,244 @@
-/* front/css/styles.css */
+/* ==========================================
+   3D MTZ Inversion - Modern Dark Theme
+   ========================================== */
 
-/* --- Базовые стили для всего тела страницы --- */
+/* === CSS Variables (Design Tokens) === */
+:root {
+    /* Color Palette */
+    --color-primary: #1A9FFF;
+    --color-primary-hover: #0D8AEC;
+    --color-primary-light: #3DB1FF;
+    --color-secondary: #3367D6;
+    --color-secondary-hover: #2455C3;
+
+    --color-success: #34A853;
+    --color-success-hover: #2D9247;
+    --color-success-light: #E6F4EA;
+
+    --color-warning: #FBBC04;
+    --color-warning-light: #FEF7E0;
+
+    --color-danger: #D93025;
+    --color-danger-hover: #C2281D;
+    --color-danger-light: #FCE8E6;
+
+    --color-info: #1A73E8;
+    --color-info-light: #E8F0FE;
+
+    /* Dark Theme Colors */
+    --color-bg-primary: #1D1D20;
+    --color-bg-secondary: #2B2B31;
+    --color-bg-tertiary: #35353B;
+    --color-bg-elevated: #3D3D43;
+
+    --color-text-primary: #FFFFFF;
+    --color-text-secondary: #B8B8B8;
+    --color-text-tertiary: #8A8A8F;
+    --color-text-muted: #5F6368;
+
+    --color-border: #3D3D43;
+    --color-border-light: #4A4A50;
+    --color-divider: #2F2F35;
+
+    /* Spacing */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+    --spacing-2xl: 48px;
+
+    /* Border Radius */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-full: 50%;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.6);
+    --shadow-glow: 0 0 20px rgba(26, 159, 255, 0.3);
+
+    /* Typography */
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    --font-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Courier New', monospace;
+
+    --text-xs: 12px;
+    --text-sm: 14px;
+    --text-base: 16px;
+    --text-lg: 18px;
+    --text-xl: 20px;
+    --text-2xl: 24px;
+    --text-3xl: 30px;
+
+    /* Transitions */
+    --transition-fast: 150ms ease-in-out;
+    --transition-base: 250ms ease-in-out;
+    --transition-slow: 350ms ease-in-out;
+
+    /* Z-index */
+    --z-dropdown: 1000;
+    --z-sticky: 1001;
+    --z-modal: 1002;
+    --z-toast: 1003;
+}
+
+/* === Reset & Base Styles === */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
 body {
-    font-family: Arial, sans-serif;
-    color: white;
-    background-color: #2B2B31;
-    height: 100%;
+    font-family: var(--font-sans);
+    color: var(--color-text-primary);
+    background-color: var(--color-bg-secondary);
+    line-height: 1.6;
+    height: 100vh;
     overflow: hidden;
 }
 
-.modal {
-    display: block;
-    position: fixed;
-    /* Уже правильно */
-    z-index: 1002;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    overflow: auto;
-    background-color: rgba(0, 0, 0, 0.5);
-    /* Добавим эти свойства для лучшего контроля */
-    box-sizing: border-box;
+/* === Typography === */
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.3;
+    margin-bottom: var(--spacing-md);
 }
 
-.modal.hidden {
-    display: none;
+h1 { font-size: var(--text-3xl); }
+h2 { font-size: var(--text-2xl); }
+h3 { font-size: var(--text-xl); }
+h4 { font-size: var(--text-lg); }
+h5 { font-size: var(--text-base); }
+h6 { font-size: var(--text-sm); }
+
+p {
+    margin-bottom: var(--spacing-md);
+    color: var(--color-text-secondary);
 }
 
-.modal-content {
-    background-color: #1D1D20;
-    margin: 10% auto;
-    padding: 20px;
-    border: 1px solid #1A9FFF;
-    border-radius: 8px;
-    width: 80%;
-    max-width: 500px;
-    position: relative;
-    /* Добавим эти свойства */
-    box-sizing: border-box;
-}
-/* Стили для виджета отправки в очередь */
-.widget {
-    margin-top: 20px;
-    padding: 15px;
-    border: 1px solid #e0e0e0;
-    border-radius: 5px;
-    background-color: #f9f9f9;
-}
-
-#send-to-queue-btn {
-    background-color: #1a73e8; /* Голубой, отличный от других кнопок */
-    color: white;
-}
-
-#send-to-queue-btn:hover {
-    background-color: #1669d6;
-}
-
-#send-to-queue-btn:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-}
-
-#queue-params {
-    width: 100%;
-    padding: 8px;
-    margin-top: 10px;
-    box-sizing: border-box;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-family: monospace; /* Для JSON */
-}
-
-/* --- Стили для формы загрузки файла --- */
-.file-upload-section {
-    margin-top: 20px;
-    padding: 15px;
-    border: 1px solid #e0e0e0;
-    border-radius: 5px;
-}
-
-#file-input {
-    margin-bottom: 10px;
-    padding: 5px;
-}
-
-#upload-btn {
-    /* Можно использовать существующие стили .btn */
-    /* Или добавить специфичные */
-    background-color: #34a853; /* Зеленоватый цвет */
-}
-
-#upload-btn:hover {
-    background-color: #2d9247;
-}
-
-.upload-progress {
-    margin-top: 10px;
-}
-
-.progress-bar-container {
-    width: 100%;
-    height: 20px;
-    background-color: #e0e0e0;
-    border-radius: 10px;
-    overflow: hidden;
-    margin-top: 5px;
-}
-
-.progress-bar {
-    height: 100%;
-    background-color: #4285f4;
-    width: 0%;
-    transition: width 0.3s ease;
-}
-
-.upload-message {
-    margin-top: 10px;
-    padding: 10px;
-    border-radius: 4px;
-}
-
-.upload-message.success {
-    background-color: #e6f4ea;
-    color: #34a853;
-}
-
-.upload-message.error {
-    background-color: #fce8e6;
-    color: #d93025;
-}
-
-.upload-message.info {
-    background-color: #e8f0fe;
-    color: #1a73e8;
-}
-
-.hidden {
-    display: none;
-}
-/* --- Конец стилей для формы загрузки файла --- */
-
-/* Кнопка закрытия */
-.close {
-    color: #aaa;
-    float: right;
-    font-size: 28px;
-    font-weight: bold;
-    cursor: pointer;
-    position: absolute;
-    top: 10px;
-    right: 15px;
-}
-
-.close:hover,
-.close:focus {
-    color: black;
+a {
+    color: var(--color-primary);
     text-decoration: none;
+    transition: color var(--transition-fast);
 }
 
-/* Стили для формы в модальном окне */
-#create-solution-form {
-    margin-top: 20px;
+a:hover {
+    color: var(--color-primary-hover);
 }
 
-#create-solution-form label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
+/* === Utility Classes === */
+.hidden {
+    display: none !important;
 }
 
-#create-solution-form input[type="text"] {
-    width: 100%;
-    padding: 10px;
-    margin-bottom: 15px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    box-sizing: border-box;
+.text-muted {
+    color: var(--color-text-muted);
 }
 
-#create-solution-form button {
-    margin-right: 10px;
+.text-center {
+    text-align: center;
 }
 
-/* Стили для сообщений об ошибках */
-.error-message {
-    color: #d93025;
-    background-color: #fce8e6;
-    padding: 10px;
-    border-radius: 4px;
-    margin-top: 10px;
-}
-
-.error-message.hidden {
-    display: none;
-}
-
-/* --- Стили Header'а --- */
+/* === Header === */
 .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 15px 20px;
-    background-color: #1D1D20;
-    border-bottom: 2px solid #1A9FFF;
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    z-index: 1000;
     height: 70px;
-    box-sizing: border-box;
-}
-
-.solutions-scroll-container {
-    /* Ограничиваем высоту. Подберите значение под ваш дизайн. */
-    /* height: 300px; */
-    /* Фиксированная высота */
-    max-height: calc(100vh - 250px);
-    /* Максимальная высота: высота экрана минус примерная высота других элементов */
-
-    /* Добавляем прокрутку по вертикали, если содержимое не помещается */
-    overflow-x: hidden;
-
-    scrollbar-width: thin;
-    scrollbar-color: #1A9FFF #1D1D20;
-
-    width: 100%;
-    box-sizing: border-box;
-    /* Включаем padding/border в ширину/высоту */
-}
-
-/* Стили для списка решений внутри контейнера прокрутки */
-.solutions-list {
+    background-color: var(--color-bg-primary);
+    border-bottom: 2px solid var(--color-primary);
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 5px;
-    /* Отступ между кнопками */
-    /* Убираем margin-top, так как он теперь у контейнера прокрутки */
-    /* margin-top: 10px; */
-    /* Убедимся, что список занимает всю ширину контейнера прокрутки */
-    width: 100%;
-    margin: 0;
-    /* Убираем возможные внешние отступы */
-    padding: 0;
-    /* Убираем возможные внутренние отступы */
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--spacing-lg);
+    z-index: var(--z-sticky);
+    box-shadow: var(--shadow-md);
 }
 
-.solution-btn {
-    width: 95%;
-    color:#cccccc;
-    background-color:#3367d6;
-    border-color:white;
-    border-width: 2px;
-    border-radius: 4px;
+.gif-container img {
+    width: 50px;
     height: 50px;
-    margin-left: 5px;
+    border-radius: var(--radius-md);
 }
 
 .header-title {
-    font-size: 22px;
-    font-weight: normal;
-    color: #5f6368;
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    color: var(--color-primary);
     margin: 0;
+    letter-spacing: -0.5px;
 }
 
+/* === User Avatar === */
 .user-profile {
     position: relative;
 }
 
 .user-avatar {
-    width: 32px;
-    /* Фиксированная ширина */
-    height: 32px;
-    /* Фиксированная высота */
-    border-radius: 50%;
-    /* Делает форму круглой */
-    cursor: pointer;
-    background-color: #1a73e8;
-    /* Цвет фана, если нет изображения */
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-full);
+    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: bold;
-    font-size: 14px;
-    user-select: none;
-    /* Убедитесь, что аватар не растягивается */
-    flex-shrink: 0;
-    object-fit: cover;
-    /* Если внутри img, правильно масштабирует изображение */
+    font-weight: 600;
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    box-shadow: var(--shadow-sm);
 }
 
-/* Для изображения внутри маленького аватара */
+.user-avatar:hover {
+    transform: scale(1.05);
+    box-shadow: var(--shadow-glow);
+}
+
 .user-avatar img {
     width: 100%;
     height: 100%;
-    border-radius: 50%;
-    /* Круглая форма для изображения */
-    object-fit: cover;
-    /* правильное масштабирование */
-    /* Убираем стандартные отступы у изображения */
-    display: block;
-    margin: 0;
-    padding: 0;
-}
-
-.profile-avatar {
-    width: 48px;
-    /* Фиксированная ширина */
-    height: 48px;
-    /* Фиксированная высота */
-    border-radius: 50%;
-    /* Круглая форма */
-    background-color: #1a73e8;
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 18px;
-    margin-right: 12px;
-    flex-shrink: 0;
-    /* Не сжимается */
+    border-radius: var(--radius-full);
     object-fit: cover;
 }
 
-/* Для изображения внутри большого аватара */
-.profile-avatar img {
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    /* Круглая форма */
-    object-fit: cover;
-    /* Правильное масштабирование */
-    display: block;
-    margin: 0;
-    padding: 0;
-}
-
-/* --- Стили Dropdown профиля --- */
+/* === Profile Dropdown === */
 .profile-dropdown {
     position: absolute;
-    top: 100%;
+    top: calc(100% + var(--spacing-sm));
     right: 0;
-    width: 280px;
-    background-color: #1D1D20;
-    border: 2px solid #1A9FFF;
-    border-radius: 8px;
-    box-shadow: 0 1px 2px 0 rgba(60, 64, 67, .30), 0 2px 6px 2px rgba(60, 64, 67, .15);
-    padding: 16px;
+    width: 320px;
+    background-color: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    padding: var(--spacing-lg);
     display: none;
-    z-index: 1001;
-    
+    z-index: var(--z-dropdown);
+    animation: slideDown var(--transition-base);
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .profile-dropdown.show {
@@ -364,49 +248,52 @@ body {
 .profile-info {
     display: flex;
     align-items: center;
-    margin-bottom: 16px;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-divider);
 }
 
 .profile-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background-color: #1a73e8;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-full);
+    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: bold;
-    font-size: 18px;
-    margin-right: 12px;
+    font-weight: 600;
+    font-size: var(--text-lg);
     flex-shrink: 0;
+    box-shadow: var(--shadow-md);
 }
 
 .profile-avatar img {
     width: 100%;
     height: 100%;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     object-fit: cover;
 }
 
 .profile-details {
-    flex-grow: 1;
+    flex: 1;
     min-width: 0;
 }
 
 .profile-name {
-    font-size: 16px;
-    font-weight: 500;
-    color: #1A9FFF;
-    margin: 0;
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin: 0 0 var(--spacing-xs) 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .profile-email {
-    font-size: 14px;
-    color: #5f6368;
+    font-size: var(--text-sm);
+    color: var(--color-text-tertiary);
     margin: 0;
     white-space: nowrap;
     overflow: hidden;
@@ -415,214 +302,580 @@ body {
 
 .logout-button {
     width: 100%;
-    background-color: #f1f3f4;
-    color: #3c4043;
-    border: 1px solid #dadce0;
-    border-radius: 4px;
-    padding: 8px 16px;
-    font-size: 14px;
+    background-color: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--text-sm);
+    font-weight: 500;
     cursor: pointer;
-    text-align: center;
-    margin-top: 16px;
-    box-sizing: border-box;
+    transition: all var(--transition-fast);
 }
 
 .logout-button:hover {
-    background-color: #e8eaed;
-    box-shadow: 0 1px 1px rgba(0, 0, 0, .1);
+    background-color: var(--color-bg-elevated);
+    border-color: var(--color-border-light);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
 }
 
-/* --- Стили основного контента (две колонки) --- */
+/* === Main Content Layout === */
 .main-content {
-    /* Учитываем фиксированную высоту header'а */
     margin-top: 70px;
     height: calc(100vh - 70px);
-    padding: 0;
-    background-color: transparent;
-    /* Используем Flexbox для двух колонок */
     display: flex;
+    overflow: hidden;
 }
 
-.dashboard-container {
-    width: 100%;
-    height: 100%;
-}
-
-.content-wrapper {
-    display: flex;
-    width: 100%;
-    height: 100%;
-}
-
-/* Левая колонка - боковая панель */
-.sidebar {
-    width: 25%;
-    /* Занимает 25% ширины */
-    background-color: #f5f5f5;
-    /* Фон для визуального отделения */
-    padding: 20px;
-    border-right: 1px solid #e0e0e0;
-    overflow-y: auto;
-    /* Добавляем прокрутку */
-    box-sizing: border-box;
-    /* Включаем padding в ширину */
-}
-
-/* Правая колонка - основная рабочая область */
-.main-area {
-    width: 75%;
-    /* Занимает 75% ширины */
-    padding: 20px;
-    overflow-y: auto;
-    /* Добавляем прокрутку */
-    box-sizing: border-box;
-    /* Включаем padding в ширину */
-    background-color: #ffffff;
-    /* Цвет фона основной области */
-}
-
-/* Стили для навигации в sidebar'е */
-.sidebar nav ul {
-    list-style-type: none;
-    padding: 0;
-    margin: 0;
-}
-
-.sidebar nav li {
-    margin-bottom: 10px;
-}
-
-.sidebar nav a {
-    text-decoration: none;
-    color: #5f6368;
-    display: block;
-    padding: 10px;
-    border-radius: 4px;
-    transition: background-color 0.2s, color 0.2s;
-    box-sizing: border-box;
-}
-
-.sidebar nav a:hover {
-    background-color: #e8eaed;
-}
-
-.sidebar nav a.active {
-    background-color: #e8f0fe;
-    color: #1a73e8;
-    font-weight: 500;
-}
-
+/* === Left Sidebar (Solutions List) === */
 .block-left {
-    width: 20%;
-
-    background-color: #1D1D20;
-
+    width: 320px;
+    background-color: var(--color-bg-primary);
+    border-right: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
+.block-left .btn {
+    margin: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
+}
+
+#solutions-list-placeholder {
+    padding: var(--spacing-lg);
+    color: var(--color-text-tertiary);
+    text-align: center;
+    font-size: var(--text-sm);
+}
+
+/* === Solutions List Container === */
+.solutions-scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0 var(--spacing-md) var(--spacing-md);
+
+    /* Custom Scrollbar */
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+}
+
+.solutions-scroll-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.solutions-scroll-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.solutions-scroll-container::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 3px;
+}
+
+.solutions-scroll-container::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-border-light);
+}
+
+.solutions-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+/* === Solution Button (Card Style) === */
+.solution-btn {
+    width: 100%;
+    min-height: 64px;
+    padding: var(--spacing-md);
+    background-color: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--text-base);
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+    overflow: hidden;
+}
+
+.solution-btn::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, var(--color-primary), var(--color-secondary));
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.solution-btn:hover {
+    background-color: var(--color-bg-elevated);
+    border-color: var(--color-primary);
+    transform: translateX(4px);
+    box-shadow: var(--shadow-md);
+}
+
+.solution-btn:hover::before {
+    opacity: 1;
+}
+
+.solution-btn.active {
+    background-color: var(--color-bg-elevated);
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-glow);
+}
+
+.solution-btn.active::before {
+    opacity: 1;
+}
+
+/* === Right Main Area === */
 .block-right {
-    width: 80%;
-    background-color: #2B2B31;
+    flex: 1;
+    background-color: var(--color-bg-secondary);
+    overflow-y: auto;
+    padding: var(--spacing-xl);
 
-
+    /* Custom Scrollbar */
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
 }
 
-/* --- Адаптивность --- */
-@media (max-width: 768px) {
-    .content-wrapper {
-        flex-direction: column;
-        height: auto;
-    }
-
-    .sidebar,
-    .main-area {
-        width: 100%;
-        height: auto;
-    }
-
-    .sidebar {
-        border-right: none;
-        border-bottom: 1px solid #e0e0e0;
-    }
+.block-right::-webkit-scrollbar {
+    width: 8px;
 }
 
-/* --- Конец стилей основного контента --- */
-/* Стили для кнопки загрузки файла */
-#upload-file-btn {
-    margin-top: 15px;
-    background-color: #34a853; /* Зеленоватый цвет, отличный от других кнопок */
+.block-right::-webkit-scrollbar-track {
+    background: transparent;
 }
 
-#upload-file-btn:hover {
-    background-color: #2d9247;
-}
-
-
-
-/* Стили для статуса загрузки */
-.upload-status {
-    margin-top: 10px;
-    padding: 10px;
+.block-right::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
     border-radius: 4px;
 }
 
-.upload-status.info {
-    background-color: #e8f0fe;
-    color: #1a73e8;
+.block-right::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-border-light);
 }
 
-.upload-status.success {
-    background-color: #e6f4ea;
-    color: #34a853;
+#solution-details-placeholder {
+    color: var(--color-text-tertiary);
+    text-align: center;
+    padding: var(--spacing-2xl);
+    font-size: var(--text-lg);
 }
 
-.upload-status.error {
-    background-color: #fce8e6;
-    color: #d93025;
-}
-
-.upload-status.hidden {
-    display: none;
-}
-
-/* --- Стили для других элементов (если используются в других частях приложения) --- */
-.container-login {
-    position: relative;
-    display: flex;
+/* === Buttons === */
+.btn {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    align-items: center;
-
-}
-
-.btn {
-    background-color: #4285f4;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
     color: white;
     border: none;
-    padding: 12px 24px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 16px;
-    margin: 10px 2px;
+    border-radius: var(--radius-md);
+    font-size: var(--text-base);
+    font-weight: 500;
     cursor: pointer;
-    border-radius: 4px;
-    transition: background-color 0.3s;
+    transition: all var(--transition-fast);
+    box-shadow: var(--shadow-sm);
+    white-space: nowrap;
 }
 
 .btn:hover {
-    background-color: #3367d6;
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    filter: brightness(1.1);
 }
 
-.user-info {
-    background-color: #e8f0fe;
-    padding: 20px;
-    border-radius: 4px;
-    margin: 20px 0;
-    text-align: left;
+.btn:active {
+    transform: translateY(0);
 }
 
-.hidden {
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Button Variants */
+.btn-secondary {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover {
+    background: var(--color-bg-elevated);
+    border-color: var(--color-border-light);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, var(--color-success), var(--color-success-hover));
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, var(--color-danger), var(--color-danger-hover));
+}
+
+/* === File Upload Section === */
+.file-upload-section {
+    background-color: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+    box-shadow: var(--shadow-md);
+}
+
+.file-upload-section h3 {
+    color: var(--color-primary);
+    margin-bottom: var(--spacing-lg);
+    font-size: var(--text-xl);
+}
+
+#file-upload-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+input[type="file"] {
+    padding: var(--spacing-md);
+    background-color: var(--color-bg-tertiary);
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+input[type="file"]:hover {
+    border-color: var(--color-primary);
+    background-color: var(--color-bg-elevated);
+}
+
+/* === Upload Progress === */
+.upload-progress {
+    margin-top: var(--spacing-lg);
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 8px;
+    background-color: var(--color-bg-tertiary);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-top: var(--spacing-sm);
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-primary), var(--color-primary-light));
+    width: 0%;
+    transition: width var(--transition-base);
+    border-radius: var(--radius-sm);
+}
+
+/* === Messages === */
+.upload-message,
+.upload-status,
+.error-message {
+    padding: var(--spacing-md);
+    border-radius: var(--radius-md);
+    margin-top: var(--spacing-md);
+    font-size: var(--text-sm);
+    border-left: 4px solid;
+}
+
+.upload-message.success,
+.upload-status.success {
+    background-color: rgba(52, 168, 83, 0.1);
+    border-color: var(--color-success);
+    color: var(--color-success);
+}
+
+.upload-message.error,
+.upload-status.error,
+.error-message {
+    background-color: rgba(217, 48, 37, 0.1);
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+}
+
+.upload-message.info,
+.upload-status.info {
+    background-color: rgba(26, 115, 232, 0.1);
+    border-color: var(--color-info);
+    color: var(--color-info);
+}
+
+/* === Modal === */
+.modal {
     display: none;
+    position: fixed;
+    z-index: var(--z-modal);
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    animation: fadeIn var(--transition-base);
 }
 
-/* --- Конец стилей для других элементов --- */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.modal:not(.hidden) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background-color: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: var(--spacing-xl);
+    width: 90%;
+    max-width: 500px;
+    position: relative;
+    box-shadow: var(--shadow-xl);
+    animation: slideUp var(--transition-base);
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.modal-content h2 {
+    color: var(--color-primary);
+    margin-bottom: var(--spacing-lg);
+}
+
+.close {
+    position: absolute;
+    top: var(--spacing-lg);
+    right: var(--spacing-lg);
+    color: var(--color-text-tertiary);
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: color var(--transition-fast);
+    line-height: 1;
+}
+
+.close:hover {
+    color: var(--color-text-primary);
+}
+
+/* === Form Styles === */
+form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+label {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-xs);
+}
+
+input[type="text"],
+textarea {
+    width: 100%;
+    padding: var(--spacing-md);
+    background-color: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: var(--text-base);
+    transition: all var(--transition-fast);
+}
+
+input[type="text"]:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(26, 159, 255, 0.1);
+}
+
+/* === Files Section === */
+.files-section {
+    background-color: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    margin-top: var(--spacing-xl);
+    box-shadow: var(--shadow-md);
+}
+
+.files-section h3 {
+    color: var(--color-primary);
+    margin-bottom: var(--spacing-lg);
+    font-size: var(--text-xl);
+}
+
+.files-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.file-card {
+    background-color: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+}
+
+.file-card:hover {
+    border-color: var(--color-primary);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+/* === Login Page === */
+.container-login {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: var(--spacing-lg);
+}
+
+.login-card {
+    background-color: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: var(--spacing-2xl);
+    width: 100%;
+    max-width: 400px;
+    box-shadow: var(--shadow-xl);
+    text-align: center;
+}
+
+.login-card h1 {
+    color: var(--color-primary);
+    margin-bottom: var(--spacing-xl);
+}
+
+/* === Responsive Design === */
+@media (max-width: 1024px) {
+    .block-left {
+        width: 280px;
+    }
+
+    .block-right {
+        padding: var(--spacing-lg);
+    }
+}
+
+@media (max-width: 768px) {
+    .header {
+        padding: 0 var(--spacing-md);
+    }
+
+    .header-title {
+        font-size: var(--text-lg);
+    }
+
+    .main-content {
+        flex-direction: column;
+    }
+
+    .block-left {
+        width: 100%;
+        max-height: 40vh;
+        border-right: none;
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .block-right {
+        padding: var(--spacing-md);
+    }
+
+    .modal-content {
+        width: 95%;
+        padding: var(--spacing-lg);
+    }
+}
+
+@media (max-width: 480px) {
+    :root {
+        --text-base: 14px;
+        --text-lg: 16px;
+        --text-xl: 18px;
+    }
+
+    .header {
+        height: 60px;
+    }
+
+    .main-content {
+        margin-top: 60px;
+        height: calc(100vh - 60px);
+    }
+
+    .btn {
+        padding: var(--spacing-sm) var(--spacing-md);
+        font-size: var(--text-sm);
+    }
+
+    .files-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* === Animations === */
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.loading-spinner {
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: var(--radius-full);
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+
+/* === Print Styles === */
+@media print {
+    .header,
+    .block-left,
+    .btn,
+    .modal {
+        display: none !important;
+    }
+
+    .block-right {
+        width: 100%;
+        padding: 0;
+    }
+}

@@ -2,32 +2,30 @@
 <html lang="ru">
 
 <head>
-    
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D MTZ online</title>
+    <title>3D MTZ Inversion - Dashboard</title>
     <link rel="stylesheet" href="/css/styles.css">
+    <link rel="icon" type="image/gif" href="a_ficon.gif">
+
     <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-auth-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src ="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-
-    <link rel="icon" type="image/gif" href="a_ficon.gif">
-
-
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 </head>
 
 <body>
-    <script src="internal/middleware/firebase/firebase-config.js"></script>
-    <!-- Header с аватаром пользователя -->
+    <script src="/js/config/firebase-config.js"></script>
+
+    <!-- Header -->
     <header class="header">
         <div class="gif-container">
-            <img src="a_ficon.gif" alt="Анимированная иконка" width="70" height="70">
+            <img src="a_ficon.gif" alt="3D MTZ Icon">
         </div>
-        <h1 class="header-title" style="color: #1A9FFF">3D MTZ Inversion</h1>
+        <h1 class="header-title">3D MTZ Inversion</h1>
         <div class="user-profile">
             <div class="user-avatar" id="user-avatar-small">AB</div>
-            <!-- Выпадающий профиль -->
+            <!-- Profile Dropdown -->
             <div class="profile-dropdown" id="profile-dropdown">
                 <div class="profile-info">
                     <div class="profile-avatar" id="user-avatar-large">AB</div>
@@ -40,60 +38,81 @@
             </div>
         </div>
     </header>
+
+    <!-- Main Content -->
     <div class="main-content">
+        <!-- Left Sidebar: Solutions List -->
         <div class="block-left">
-            <!-- Кнопка для создания нового решения -->
-            <button id="create-solution-btn" class="btn">Создать новое решение</button>
-            <p id="solutions-list-placeholder">Загрузка решений...</p> <!-- Начальное состояние -->
-            <!-- Здесь будет список решений -->
-            <div id="solutions-list-container"></div>
-        </div>
-        <div class="block-right">
-            <p id="solution-details-placeholder">Выберите решение из списка слева или создайте новое.</p>
+            <button id="create-solution-btn" class="btn">+ Новое решение</button>
+            <p id="solutions-list-placeholder">Загрузка решений...</p>
 
-            <div id="solution-details-container">
-
+            <div class="solutions-scroll-container">
+                <div id="solutions-list-container" class="solutions-list"></div>
             </div>
+        </div>
+
+        <!-- Right Main Area: Solution Details -->
+        <div class="block-right">
+            <p id="solution-details-placeholder">Выберите решение из списка или создайте новое</p>
+
+            <div id="solution-details-container"></div>
+
+            <!-- File Upload Section -->
             <div id="file-upload-section" class="file-upload-section hidden">
-                <h3>Загрузить файл данных (.dat)</h3>
+                <h3>Загрузить входные данные</h3>
+                <p style="color: var(--color-text-secondary); margin-bottom: 16px;">
+                    Загрузите два файла с данными для начала расчёта обратной задачи
+                </p>
                 <form id="file-upload-form">
-                    <input type="file" id="file-input-p" name="file-p" accept=".dat" required>
-                    <br>
-                    <input type="file" id="file-input-c" name="file-c" accept=".dat" required>
-                    <button type="submit" id="upload-file-btn" class="btn">Загрузить</button>
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 8px;">Файл профилей (.dat)</label>
+                            <input type="file" id="file-input-p" name="file-p" accept=".dat" required>
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 8px;">Файл coarse сетки (.dat)</label>
+                            <input type="file" id="file-input-c" name="file-c" accept=".dat" required>
+                        </div>
+                    </div>
+                    <button type="submit" id="upload-file-btn" class="btn btn-success">Загрузить и начать расчёт</button>
                 </form>
 
                 <div id="upload-progress" class="upload-progress hidden">
                     <p>Загрузка: <span id="progress-percent">0%</span></p>
                     <div class="progress-bar-container">
-                        <div class="progress-bar" id="progress-bar" style="width: 0%;"></div>
+                        <div class="progress-bar" id="progress-bar"></div>
                     </div>
                 </div>
-                <div id="upload-message" class="upload-message "></div>
 
-
-            </div>
-            <div id="solution-files-container" class="files-section">
-            <h3>Результаты расчёта</h3>
-            <div id="files-list" class="files-grid">
-            <p class="text-muted">Загрузка файлов...</p>
-            </div>
+                <div id="upload-message" class="upload-message hidden"></div>
             </div>
 
+            <!-- Results Section -->
+            <div id="solution-files-container" class="files-section hidden">
+                <h3>Результаты расчёта</h3>
+                <div id="files-list" class="files-grid">
+                    <p class="text-muted">Файлы результатов появятся здесь после завершения расчёта</p>
+                </div>
+            </div>
         </div>
     </div>
-    </div>
 
-    <!-- Диалоговое окно для создания нового решения -->
+    <!-- Modal: Create New Solution -->
     <div id="create-solution-modal" class="modal hidden">
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2>Создать новое решение</h2>
+            <p style="color: var(--color-text-secondary); margin-bottom: 24px;">
+                Введите название для нового проекта расчёта
+            </p>
             <form id="create-solution-form">
-                <label for="solution-name">Название решения:</label>
-                <input type="text" id="solution-name" name="solution-name" required>
-                <button type="submit" class="btn">Создать</button>
-                <button type="button" id="cancel-create-btn" class="btn btn-secondary">Отмена</button>
+                <label for="solution-name">Название решения</label>
+                <input type="text" id="solution-name" name="solution-name" placeholder="Например: Расчёт МТЗ №1" required>
+
+                <div style="display: flex; gap: 12px; margin-top: 24px;">
+                    <button type="submit" class="btn">Создать</button>
+                    <button type="button" id="cancel-create-btn" class="btn btn-secondary">Отмена</button>
+                </div>
             </form>
             <div id="create-solution-error" class="error-message hidden"></div>
         </div>

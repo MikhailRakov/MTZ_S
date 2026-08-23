@@ -1,23 +1,25 @@
-<!-- front/index.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Мое приложение</title>
+    <title>3D MTZ Inversion</title>
     <link rel="stylesheet" href="/css/styles.css">
+    <link rel="icon" type="image/gif" href="a_ficon.gif">
     <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-auth-compat.js"></script>
 </head>
 <body>
-    <div class="container">
-        <h1>Мое приложение</h1>
-        <p>Проверка аутентификации...</p>
-        <div id="redirect-message">Перенаправление...</div>
+    <div class="container-login">
+        <div class="login-card">
+            <div class="loading-spinner" style="margin: 0 auto 24px;"></div>
+            <h2 style="color: var(--color-text-secondary); font-weight: 400;">Проверка аутентификации...</h2>
+            <p style="color: var(--color-text-tertiary); font-size: 14px;">Пожалуйста, подождите</p>
+        </div>
     </div>
 
     <script src="/js/config/firebase-config.js"></script>
-    
+
     <script>
         // Инициализация Firebase
         if (typeof firebaseConfig !== 'undefined') {

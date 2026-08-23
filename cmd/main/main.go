@@ -98,10 +98,31 @@ func main() {
 	logger.Info("Create Router")
 	router := httprouter.New()
 
-	/////
-	router.ServeFiles("/js/*filepath", http.Dir("front/js/"))
-	router.ServeFiles("/css/*filepath", http.Dir("front/css/"))
-	/////
+	// Middleware для установки правильных MIME типов
+	setContentType := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Определяем MIME тип по расширению файла
+			ext := filepath.Ext(r.URL.Path)
+			switch ext {
+			case ".js":
+				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			case ".css":
+				w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			case ".json":
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			case ".html":
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	// Статические файлы с правильными MIME типами
+	jsHandler := setContentType(http.FileServer(http.Dir("front/js/")))
+	cssHandler := setContentType(http.FileServer(http.Dir("front/css/")))
+
+	router.Handler(http.MethodGet, "/js/*filepath", http.StripPrefix("/js/", jsHandler))
+	router.Handler(http.MethodGet, "/css/*filepath", http.StripPrefix("/css/", cssHandler))
 
 	//router.GET("//js/config/firebase-config.js", serveFirebaseConfigJS)
 
