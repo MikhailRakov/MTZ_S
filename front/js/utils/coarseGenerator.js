@@ -1,4 +1,7 @@
 // Coarse Grid Generator with 3D Visualization
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
 export class CoarseGenerator {
     constructor() {
         this.profilesData = null;
