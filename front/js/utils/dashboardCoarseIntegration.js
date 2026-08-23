@@ -1,8 +1,14 @@
 // Dashboard Coarse Generator Integration
-import { CoarseGenerator } from './utils/coarseGenerator.js';
+import { CoarseGenerator } from './coarseGenerator.js';
+
+let generatorInstance = null;
 
 export function initCoarseGenerator() {
-    const generator = new CoarseGenerator();
+    if (!generatorInstance) {
+        generatorInstance = new CoarseGenerator();
+    }
+
+    const generator = generatorInstance;
 
     // Elements
     const profilesUploadArea = document.getElementById('profiles-upload-area');
@@ -16,16 +22,24 @@ export function initCoarseGenerator() {
     const useGeneratedBtn = document.getElementById('use-generated-coarse-btn');
     const toggleGeneratorBtn = document.getElementById('toggle-generator-btn');
     const generatorContent = document.getElementById('generator-content');
+    const fileInputP = document.getElementById('file-input-p');
     const fileInputC = document.getElementById('file-input-c');
+    const submitFilesSection = document.getElementById('submit-files-section');
+    const submitFilesBtn = document.getElementById('submit-files-btn');
+    const fileUploadForm = document.getElementById('file-upload-form');
+    const uploadFileBtn = document.getElementById('upload-file-btn');
+    const readyProfilesName = document.getElementById('ready-profiles-name');
+    const readyCoarseName = document.getElementById('ready-coarse-name');
 
     if (!profilesUploadArea) return; // Not on dashboard page
 
     let profilesData = null;
     let profilesStats = null;
+    let profilesFile = null;
 
     // Toggle generator visibility
     toggleGeneratorBtn?.addEventListener('click', () => {
-        generatorContent.classList.toggle('hidden');
+        const isHidden = generatorContent.classList.toggle('hidden');
         toggleGeneratorBtn.classList.toggle('rotated');
     });
 
@@ -59,11 +73,14 @@ export function initCoarseGenerator() {
 
     // Handle Profiles.dat upload
     function handleProfilesFile(file) {
+        profilesFile = file;
         const reader = new FileReader();
 
         reader.onload = (e) => {
             try {
                 profilesData = e.target.result;
+                // CRITICAL: Store profiles data in generator instance
+                generator.profilesData = profilesData;
                 profilesStats = generator.parseProfilesData(profilesData);
 
                 // Update UI
@@ -98,6 +115,14 @@ export function initCoarseGenerator() {
 
                 generatorControls.classList.remove('hidden');
                 generateBtn.disabled = false;
+
+                // Set profiles file to hidden input
+                const dataTransferP = new DataTransfer();
+                dataTransferP.items.add(profilesFile);
+                fileInputP.files = dataTransferP.files;
+                readyProfilesName.textContent = `✓ ${file.name}`;
+
+                checkFilesReady();
 
             } catch (error) {
                 console.error('Error parsing Profiles.dat:', error);
@@ -148,43 +173,66 @@ export function initCoarseGenerator() {
 
             // Initialize 3D visualization
             setTimeout(() => {
-                generator.init3DVisualization(gridCanvasContainer, coarseData);
+                try {
+                    generator.init3DVisualization(gridCanvasContainer, coarseData, profilesStats);
 
-                // Update stats
-                const totalCells = config.nX * config.nY * config.nZ;
-                const xExtent = coarseData.xCells.reduce((a, b) => a + b, 0);
-                const yExtent = coarseData.yCells.reduce((a, b) => a + b, 0);
-                const zExtent = coarseData.zCells.reduce((a, b) => a + b, 0);
+                    // Update stats
+                    const totalCells = config.nX * config.nY * config.nZ;
+                    const xExtent = coarseData.xCells.reduce((a, b) => a + b, 0);
+                    const yExtent = coarseData.yCells.reduce((a, b) => a + b, 0);
+                    const zExtent = coarseData.zCells.reduce((a, b) => a + b, 0);
 
-                document.getElementById('grid-stats').innerHTML = `
-                    <div class="stat-item">
-                        <div class="stat-label">Размер сетки</div>
-                        <div class="stat-value">${config.nX} × ${config.nY} × ${config.nZ}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Всего ячеек</div>
-                        <div class="stat-value">${totalCells.toLocaleString()}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">X протяженность</div>
-                        <div class="stat-value">${(xExtent / 1000).toFixed(1)} км</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Y протяженность</div>
-                        <div class="stat-value">${(yExtent / 1000).toFixed(1)} км</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Z глубина</div>
-                        <div class="stat-value">${(zExtent / 1000).toFixed(1)} км</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Первый Z слой</div>
-                        <div class="stat-value">${config.zFirstLayer} м</div>
-                    </div>
-                `;
+                    // Calculate padding cells
+                    const nCoreX = Math.max(Math.floor(config.nX * 0.35), 6);
+                    const nPaddingX = Math.floor((config.nX - nCoreX) / 2);
+                    const nCoreY = Math.max(Math.floor(config.nY * 0.35), 6);
+                    const nPaddingY = Math.floor((config.nY - nCoreY) / 2);
 
-                // Scroll to visualization
-                gridVisualization.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    document.getElementById('grid-stats').innerHTML = `
+                        <div class="stat-item">
+                            <div class="stat-label">Размер сетки</div>
+                            <div class="stat-value">${config.nX} × ${config.nY} × ${config.nZ}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Всего ячеек</div>
+                            <div class="stat-value">${totalCells.toLocaleString()}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Станций наблюдения</div>
+                            <div class="stat-value">${profilesStats.numStations}</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">X расширение</div>
+                            <div class="stat-value">${nPaddingX * 2} ячеек</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Y расширение</div>
+                            <div class="stat-value">${nPaddingY * 2} ячеек</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">X протяженность</div>
+                            <div class="stat-value">${(xExtent / 1000).toFixed(1)} км</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Y протяженность</div>
+                            <div class="stat-value">${(yExtent / 1000).toFixed(1)} км</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Z глубина</div>
+                            <div class="stat-value">${(zExtent / 1000).toFixed(1)} км</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Первый Z слой</div>
+                            <div class="stat-value">${config.zFirstLayer} м</div>
+                        </div>
+                    `;
+
+                    // Scroll to visualization
+                    gridVisualization.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } catch (vizError) {
+                    console.error('Visualization error:', vizError);
+                    alert('Ошибка визуализации: ' + vizError.message);
+                }
             }, 100);
 
         } catch (error) {
@@ -215,21 +263,18 @@ export function initCoarseGenerator() {
             // Set the file input
             fileInputC.files = dataTransfer.files;
 
-            // Trigger change event
-            const event = new Event('change', { bubbles: true });
-            fileInputC.dispatchEvent(event);
-
             // Visual feedback
             useGeneratedBtn.textContent = '✓ Сетка добавлена';
             useGeneratedBtn.style.background = 'linear-gradient(135deg, var(--color-success), var(--color-success-hover))';
+
+            readyCoarseName.textContent = '✓ Coarse.dat (сгенерирован)';
 
             setTimeout(() => {
                 useGeneratedBtn.textContent = '✓ Использовать эту сетку';
                 useGeneratedBtn.style.background = '';
             }, 2000);
 
-            // Scroll to upload form
-            document.getElementById('file-upload-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            checkFilesReady();
 
         } catch (error) {
             console.error('Error using generated coarse:', error);
@@ -237,8 +282,81 @@ export function initCoarseGenerator() {
         }
     });
 
+    // Check if both files are ready
+    function checkFilesReady() {
+        if (fileInputP.files.length > 0 && fileInputC.files.length > 0) {
+            submitFilesSection.classList.remove('hidden');
+            submitFilesSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    // Submit files button
+    submitFilesBtn?.addEventListener('click', () => {
+        // Trigger the hidden form submit
+        uploadFileBtn.click();
+    });
+
     // Cleanup on page unload
     window.addEventListener('beforeunload', () => {
         generator.dispose();
     });
+}
+
+// Reset generator state when switching solutions
+export function resetCoarseGenerator() {
+    if (!generatorInstance) return;
+
+    // Dispose 3D resources
+    generatorInstance.dispose();
+
+    // Reset UI elements
+    const profilesUploadArea = document.getElementById('profiles-upload-area');
+    const generatorControls = document.getElementById('generator-controls');
+    const gridVisualization = document.getElementById('grid-visualization');
+    const profilesInfo = document.getElementById('profiles-info');
+    const submitFilesSection = document.getElementById('submit-files-section');
+    const fileInputP = document.getElementById('file-input-p');
+    const fileInputC = document.getElementById('file-input-c');
+
+    if (profilesUploadArea) {
+        profilesUploadArea.innerHTML = `
+            <div style="font-size: 3em; margin-bottom: 10px;">📁</div>
+            <h3>Drop Profiles.dat here or click to browse</h3>
+            <p style="color: #999; margin-top: 10px;">Supported format: Profiles.dat (MT data file)</p>
+        `;
+    }
+
+    if (generatorControls) {
+        generatorControls.classList.add('hidden');
+    }
+
+    if (gridVisualization) {
+        gridVisualization.classList.add('hidden');
+        const gridCanvasContainer = document.getElementById('grid-canvas-container');
+        if (gridCanvasContainer) {
+            gridCanvasContainer.innerHTML = '';
+        }
+    }
+
+    if (profilesInfo) {
+        profilesInfo.innerHTML = '';
+    }
+
+    if (submitFilesSection) {
+        submitFilesSection.classList.add('hidden');
+    }
+
+    // Clear file inputs
+    if (fileInputP) {
+        fileInputP.value = '';
+    }
+    if (fileInputC) {
+        fileInputC.value = '';
+    }
+
+    // Reset generator instance
+    generatorInstance.profilesData = null;
+    generatorInstance.generatedCoarse = null;
+
+    console.log('[COARSE GENERATOR] State reset for new solution');
 }

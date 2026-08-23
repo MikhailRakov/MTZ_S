@@ -125,14 +125,57 @@
                                     <button type="button" id="use-generated-coarse-btn" class="btn btn-sm">✓ Использовать эту сетку</button>
                                 </div>
                             </div>
-                            <div id="grid-canvas-container" class="grid-canvas"></div>
+                            <div style="position: relative;">
+                                <div id="grid-canvas-container" class="grid-canvas"></div>
+                                <!-- Legend Overlay -->
+                                <div class="viz-legend">
+                                    <div class="legend-title">Легенда</div>
+                                    <div class="legend-section">
+                                        <div class="legend-subtitle">Оси координат:</div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #ff0000;"></span>
+                                            <span>X — Восток (East)</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #00ff00;"></span>
+                                            <span>Y — Север (North)</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #0088ff;"></span>
+                                            <span>Z — Глубина (Depth)</span>
+                                        </div>
+                                    </div>
+                                    <div class="legend-section">
+                                        <div class="legend-subtitle">Слои сетки:</div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #00ff88;"></span>
+                                            <span>Поверхность</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #1A9FFF;"></span>
+                                            <span>Приповерхностные слои</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #667eea;"></span>
+                                            <span>Средние слои</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #ff4444;"></span>
+                                            <span>Глубокие слои</span>
+                                        </div>
+                                    </div>
+                                    <div class="legend-note">
+                                        💡 Используйте мышь для вращения, масштабирования и панорамирования
+                                    </div>
+                                </div>
+                            </div>
                             <div id="grid-stats" class="grid-stats"></div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Traditional File Upload Form -->
-                <form id="file-upload-form" style="margin-top: 24px;">
+                <!-- Traditional File Upload Form (Hidden, used programmatically) -->
+                <form id="file-upload-form" style="display: none;">
                     <div style="display: flex; flex-direction: column; gap: 12px;">
                         <div>
                             <label style="display: block; margin-bottom: 8px;">Файл профилей (.dat)</label>
@@ -145,6 +188,18 @@
                     </div>
                     <button type="submit" id="upload-file-btn" class="btn btn-success">Загрузить и начать расчёт</button>
                 </form>
+
+                <!-- Submit Button (visible) -->
+                <div id="submit-files-section" class="hidden" style="margin-top: 24px;">
+                    <button type="button" id="submit-files-btn" class="btn btn-success" style="width: 100%;">
+                        🚀 Загрузить файлы и начать расчёт
+                    </button>
+                    <div id="files-ready-status" style="margin-top: 12px; padding: 12px; background: var(--color-info-light); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--color-info);">
+                        <strong>✓ Файлы готовы к загрузке:</strong><br>
+                        <span id="ready-profiles-name">Profiles.dat</span><br>
+                        <span id="ready-coarse-name">Coarse.dat</span>
+                    </div>
+                </div>
 
                 <div id="upload-progress" class="upload-progress hidden">
                     <p>Загрузка: <span id="progress-percent">0%</span></p>

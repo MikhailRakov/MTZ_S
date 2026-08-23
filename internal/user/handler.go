@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -298,23 +299,9 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 		return
 	}
 
-	// 3. Проверяем количество активных задач пользователя
-	// Ограничение: только 1 активная задача на пользователя
-	// Обратная задача МТЗ - ресурсоёмкий процесс, требующий значительного времени
-	const maxActiveTasks = 1
-	activeTasksCount, err := h.GetActiveTasksCount(r.Context(), uid)
-	if err != nil {
-		h.logger.Errorf("Failed to get active tasks count for user %s: %v", uid, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	if activeTasksCount >= maxActiveTasks {
-		h.logger.Warnf("User %s already has an active task running", uid)
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, `{"error":"task_in_progress","message":"you already have an active calculation task. please wait for it to complete before submitting a new one"}`, http.StatusTooManyRequests)
-		return
-	}
+	// 3. Removed concurrent task limit - users can now run multiple tasks simultaneously
+	// Note: Previously limited to 1 active task per user
+	// h.logger.Infof("User %s can submit new task (concurrent limit removed)", uid)
 
 	// 4. Ограничиваем размер тела запроса (например, 32 МБ)
 	const maxUploadSize int64 = 32 << 20 // 32 MB
@@ -593,6 +580,108 @@ func (h *handler) GetSolutionFiles(w http.ResponseWriter, r *http.Request, ps ht
 	})
 }
 
+// GetSolutionFile returns a specific file from solution results
+func (h *handler) GetSolutionFile(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	solutionID := ps.ByName("solutionID")
+	fileKey := ps.ByName("fileKey")
+
+	if solutionID == "" || fileKey == "" {
+		http.Error(w, `{"error":"solution_id and file_key are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Decode URL-encoded fileKey
+	decodedKey, err := url.QueryUnescape(fileKey)
+	if err != nil {
+		h.logger.Errorf("Failed to decode file key: %v", err)
+		http.Error(w, `{"error":"invalid file key"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Extract and verify token
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error":"authorization header is required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		http.Error(w, `{"error":"invalid authorization header format"}`, http.StatusUnauthorized)
+		return
+	}
+
+	idTokenStr := authHeader[len(bearerPrefix):]
+	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+	if err != nil {
+		h.logger.Errorf("Failed to verify ID token: %v", err)
+		http.Error(w, `{"error":"invalid id token"}`, http.StatusUnauthorized)
+		return
+	}
+	uid := token.UID
+
+	// Verify that the file belongs to this user and solution
+	expectedPrefix := fmt.Sprintf("users/%s/solutions/%s/", uid, solutionID)
+	if !strings.HasPrefix(decodedKey, expectedPrefix) {
+		h.logger.Warnf("User %s attempted to access unauthorized file: %s", uid, decodedKey)
+		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+		return
+	}
+
+	// Get file from S3
+	bucketName := os.Getenv("AWS_S3_BUCKET_NAME")
+	getInput := &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(decodedKey),
+	}
+
+	result, err := h.s3Client.GetObject(r.Context(), getInput)
+	if err != nil {
+		h.logger.Errorf("Failed to get S3 object %s: %v", decodedKey, err)
+		http.Error(w, `{"error":"file not found"}`, http.StatusNotFound)
+		return
+	}
+	defer result.Body.Close()
+
+	// Get file metadata
+	fileName := filepath.Base(decodedKey)
+
+	// Set headers
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", fileName))
+
+	// Try to detect content type
+	if result.ContentType != nil {
+		w.Header().Set("Content-Type", *result.ContentType)
+	} else {
+		// Fallback based on extension
+		ext := strings.ToLower(filepath.Ext(fileName))
+		switch ext {
+		case ".txt", ".log", ".dat":
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		case ".json":
+			w.Header().Set("Content-Type", "application/json")
+		case ".png":
+			w.Header().Set("Content-Type", "image/png")
+		case ".jpg", ".jpeg":
+			w.Header().Set("Content-Type", "image/jpeg")
+		case ".pdf":
+			w.Header().Set("Content-Type", "application/pdf")
+		default:
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+	}
+
+	if result.ContentLength != nil {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", *result.ContentLength))
+	}
+
+	// Stream file to response
+	_, err = io.Copy(w, result.Body)
+	if err != nil {
+		h.logger.Errorf("Failed to stream file %s: %v", decodedKey, err)
+	}
+}
+
 func (h *handler) GetPresignedURL(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	// 1. Аутентификация
 	authHeader := r.Header.Get("Authorization")
@@ -656,6 +745,7 @@ func (h *handler) Register(router *httprouter.Router) {
 	// === МАРШРУТЫ С :solutionID (должны быть вместе) ===
 	router.POST("/api/users/self/solutions/:solutionID/upload", h.UploadSolutionFile)
 	router.GET("/api/users/self/solutions/:solutionID/files", h.GetSolutionFiles)
+	router.GET("/api/users/self/solutions/:solutionID/files/*fileKey", h.GetSolutionFile)
 	router.GET("/api/users/self/solutions/:solutionID", h.GetSolutionByID)
 
 	// === ОБЩИЕ МАРШРУТЫ ===
