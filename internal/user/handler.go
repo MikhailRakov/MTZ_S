@@ -298,7 +298,25 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 		return
 	}
 
-	// 3. Ограничиваем размер тела запроса (например, 32 МБ)
+	// 3. Проверяем количество активных задач пользователя
+	// Ограничение: только 1 активная задача на пользователя
+	// Обратная задача МТЗ - ресурсоёмкий процесс, требующий значительного времени
+	const maxActiveTasks = 1
+	activeTasksCount, err := h.GetActiveTasksCount(r.Context(), uid)
+	if err != nil {
+		h.logger.Errorf("Failed to get active tasks count for user %s: %v", uid, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if activeTasksCount >= maxActiveTasks {
+		h.logger.Warnf("User %s already has an active task running", uid)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"task_in_progress","message":"you already have an active calculation task. please wait for it to complete before submitting a new one"}`, http.StatusTooManyRequests)
+		return
+	}
+
+	// 4. Ограничиваем размер тела запроса (например, 32 МБ)
 	const maxUploadSize int64 = 32 << 20 // 32 MB
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
@@ -367,15 +385,25 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 	}
 
 	h.logger.Infof("File %s uploaded to S3 successfully for user %s, solution %s (key: %s)", filename, uid, solutionID, s3Key)
-	// --- КОНЕЦ НОВОГО ---
 
-	// --- НОВОЕ: Отправка ключа в очередь RabbitMQ ---
+	// 5. Создаём запись задачи в Firestore ПЕРЕД отправкой в очередь
+	timestamp := time.Now().Unix()
+	taskID, err := h.CreateTask(r.Context(), uid, solutionID, s3Key, timestamp)
+	if err != nil {
+		h.logger.Errorf("Failed to create task record for user %s: %v", uid, err)
+		http.Error(w, "Internal server error: failed to create task", http.StatusInternalServerError)
+		return
+	}
+	h.logger.Infof("Created task record with ID %s for user %s, solution %s", taskID, uid, solutionID)
+
+	// 6. Отправка ключа в очередь RabbitMQ
 	// Подготавливаем сообщение
 	message := map[string]interface{}{
 		"user_id":     uid,
 		"solution_id": solutionID,
-		"s3_file_key": s3Key, // <-- Ключ S3 отправляется в очередь
-		"timestamp":   time.Now().Unix(),
+		"s3_file_key": s3Key,
+		"task_id":     taskID, // Добавляем ID задачи для отслеживания
+		"timestamp":   timestamp,
 	}
 
 	messageBody, err := json.Marshal(message)
@@ -408,7 +436,7 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 		return
 	}
 
-	h.logger.Infof("S3 file key message sent to queue for user %s, solution %s, key: %s", uid, solutionID, s3Key)
+	h.logger.Infof("S3 file key message sent to queue for user %s, solution %s, key: %s, task_id: %s", uid, solutionID, s3Key, taskID)
 	// --- КОНЕЦ НОВОГО ---
 
 	// 10. Возвращаем успешный ответ клиенту
