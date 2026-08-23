@@ -79,7 +79,7 @@ jobs:
             -e AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }} \
             -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
             -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-            -p 8081:8081 \
+            -p 8081:8080 \
             -v ~/mtz-server-dev/serviceAccountKey.json:/app/serviceAccountKey.json:ro \
             -v ~/mtz-server-dev/config.yml:/app/config.yml:ro \
             -v ~/mtz-server-dev/logs:/app/logs \
