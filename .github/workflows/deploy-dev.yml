@@ -1,0 +1,98 @@
+name: Deploy Dev to Server
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'front/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: mikhailrakov/mtz_s/mtz-server-dev
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: self-hosted
+    steps:
+      - name: Deploy to dev server
+        run: |
+          set -e
+
+          echo "🔧 Deploying DEV version..."
+
+          echo "🔐 Создание директорий..."
+          mkdir -p /opt/mtz-server-dev/logs
+
+          echo "🔑 Декодирование serviceAccountKey.json..."
+          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > /opt/mtz-server-dev/serviceAccountKey.json
+          chmod 600 /opt/mtz-server-dev/serviceAccountKey.json
+
+          echo "📝 Декодирование config.yml..."
+          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > /opt/mtz-server-dev/config.yml
+          chmod 644 /opt/mtz-server-dev/config.yml
+
+          echo "🔑 Логин в GHCR..."
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+          echo "📥 Загрузка образа..."
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          echo "🧹 Остановка старого контейнера..."
+          docker rm -f mtz-server-dev 2>/dev/null || true
+
+          echo "🚀 Запуск нового DEV контейнера..."
+          docker run -d --name mtz-server-dev \
+            -e RABBITMQ_URL=${{ secrets.RABBITMQ_URL }} \
+            -e PORT=8081 \
+            -e AWS_S3_ENDPOINT=${{ secrets.AWS_S3_ENDPOINT }} \
+            -e AWS_S3_REGION=${{ secrets.AWS_S3_REGION }} \
+            -e AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }} \
+            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+            -p 8081:8081 \
+            -v /opt/mtz-server-dev/serviceAccountKey.json:/app/serviceAccountKey.json:ro \
+            -v /opt/mtz-server-dev/config.yml:/app/config.yml:ro \
+            -v /opt/mtz-server-dev/logs:/app/logs \
+            --restart unless-stopped \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          echo "✅ DEV деплой завершён!"
+          echo "🔗 Dev server running on port 8081"
+          docker ps | grep mtz-server-dev
