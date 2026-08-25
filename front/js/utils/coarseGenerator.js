@@ -59,48 +59,55 @@ export class CoarseGenerator {
     }
 
     // Generate X/Y cells with proper geometric progression (ModEM/MT3D style)
-    // Core zone covers station area, padding extends to boundaries
+    // The list is built as one half (centre -> boundary) and then mirrored, so it is
+    // exactly symmetric: uniform "core" cells cover the station area, geometric
+    // padding grows towards the model boundary. Symmetry is what keeps the core zone
+    // centred on the station area once the origin is placed at centre - extent / 2.
+    // `minCellSize` is the target core cell size; it is only reached if the cell
+    // budget allows it (at most half of the cells per side go into the core).
     generateXYCells(min, max, nCells, padding = 1.3, growthFactor = 1.2, minCellSize = 30000) {
-        const stationRange = max - min;
+        const stationRange = Math.max(max - min, minCellSize);
 
-        // Calculate how many core cells we need to cover station range with minCellSize
-        const nCoreNeeded = Math.ceil(stationRange / minCellSize);
+        // Fine (core) zone: station area plus a margin on each side
+        const coreExtent = stationRange * Math.max(padding, 1.0);
 
-        // Core zone should be ~40-50% of total cells (where stations are)
-        const nCore = Math.min(nCoreNeeded, Math.floor(nCells * 0.45));
-        const nPadding = Math.floor((nCells - nCore) / 2);
-
-        const cells = [];
-
-        // Core cell size to exactly cover station range
-        const coreSize = stationRange / nCore;
-
-        console.log(`[GRID GEN] Range: ${stationRange.toFixed(0)}m, nCells: ${nCells}, nCore: ${nCore}, nPadding: ${nPadding}, coreSize: ${coreSize.toFixed(0)}m`);
-
-        // Left padding zone: geometric progression from LARGE (boundary) to SMALL (core)
-        for (let i = nPadding; i > 0; i--) {
-            const size = coreSize * Math.pow(growthFactor, i);
-            cells.push(size);
+        if (nCells <= 2) {
+            return new Array(nCells).fill(coreExtent / nCells);
         }
 
-        // Core zone (uniform cells covering exactly the station range)
-        for (let i = 0; i < nCore; i++) {
-            cells.push(coreSize);
+        // Cells per side; for an odd nCells one extra core cell sits exactly in the middle
+        const nHalf = Math.floor(nCells / 2);
+        const nCentre = nCells % 2;
+
+        // Core cells per side - never more than half of them, so padding always exists
+        const nCoreHalf = Math.min(
+            Math.max(1, Math.ceil(coreExtent / 2 / minCellSize)),
+            Math.max(1, Math.floor(nHalf * 0.5))
+        );
+        const nPaddingHalf = nHalf - nCoreHalf;
+        const coreSize = coreExtent / (2 * nCoreHalf + nCentre);
+
+        // One half of the grid, from the centre towards the boundary
+        const half = [];
+        for (let i = 0; i < nCoreHalf; i++) {
+            half.push(coreSize);
+        }
+        let size = coreSize;
+        for (let i = 0; i < nPaddingHalf; i++) {
+            size *= growthFactor;
+            half.push(size);
         }
 
-        // Right padding zone: geometric progression from SMALL (core) to LARGE (boundary)
-        for (let i = 1; i <= nPadding; i++) {
-            const size = coreSize * Math.pow(growthFactor, i);
-            cells.push(size);
-        }
+        // Mirror: boundary -> centre | [centre cell] | centre -> boundary
+        const cells = [...half].reverse();
+        if (nCentre) cells.push(coreSize);
+        cells.push(...half);
 
-        // Adjust to match exactly nCells
-        while (cells.length < nCells) {
-            cells.push(cells[cells.length - 1] * growthFactor);
-        }
-        while (cells.length > nCells) {
-            cells.pop();
-        }
+        const total = cells.reduce((a, b) => a + b, 0);
+        console.log(`[GRID GEN] stations: ${(stationRange / 1000).toFixed(1)} km, ` +
+            `cells: ${cells.length}/${nCells}, ` +
+            `core: ${2 * nCoreHalf + nCentre} x ${coreSize.toFixed(0)} m = ${(coreExtent / 1000).toFixed(1)} km, ` +
+            `padding: ${nPaddingHalf} per side, total: ${(total / 1000).toFixed(1)} km`);
 
         return cells;
     }
@@ -228,7 +235,11 @@ export class CoarseGenerator {
         const centerX = (profilesStats.xMin + profilesStats.xMax) / 2;
         const centerY = (profilesStats.yMin + profilesStats.yMax) / 2;
 
-        // Origin is at bottom-left corner (grid is centered around station area)
+        // Origin is at bottom-left corner (grid is centered around station area).
+        // Because xCells/yCells are mirror-symmetric, this puts the fine core zone
+        // exactly around the station area.
+        config.centerX = centerX;
+        config.centerY = centerY;
         config.originX = centerX - (xExtent / 2);
         config.originY = centerY - (yExtent / 2);
         config.originZ = 0.0;
@@ -239,11 +250,24 @@ export class CoarseGenerator {
 
         const content = this.buildCoarseContent(config, xCells, yCells, zCells);
 
+        // Actual core/padding split, read back from the generated cell lists
+        const nCore = cells => {
+            const smallest = Math.min(...cells);
+            return cells.filter(v => Math.abs(v - smallest) < 1e-6).length;
+        };
+        const layout = {
+            nCoreX: nCore(xCells),
+            nPaddingX: config.nX - nCore(xCells),
+            nCoreY: nCore(yCells),
+            nPaddingY: config.nY - nCore(yCells)
+        };
+
         this.generatedCoarse = {
             content,
             xCells,
             yCells,
             zCells,
+            layout,
             config,
             stats: profilesStats
         };
@@ -268,13 +292,15 @@ export class CoarseGenerator {
         const maxExtent = Math.max(xExtent, yExtent, zExtent);
 
         this.camera = new THREE.PerspectiveCamera(50, width / height, maxExtent * 0.01, maxExtent * 10);
+
+        // IMPORTANT: Set camera up vector to make Z axis point up (Cartesian coordinates)
+        // before lookAt(), so the initial orientation is already computed with Z up
+        this.camera.up.set(0, 0, 1);
+
         const cameraDistance = maxExtent * 1.5;
         // Position camera to see the grid from an angle
         this.camera.position.set(cameraDistance * 0.8, cameraDistance * 0.8, cameraDistance * 1.0);
         this.camera.lookAt(0, 0, -zExtent * 0.3);
-
-        // IMPORTANT: Set camera up vector to make Z axis point up (Cartesian coordinates)
-        this.camera.up.set(0, 0, 1);
 
         // Renderer with better settings
         this.renderer = new THREE.WebGLRenderer({
@@ -391,36 +417,41 @@ export class CoarseGenerator {
         // Group for all stations
         const stationsGroup = new THREE.Group();
 
-        console.log(`[COARSE GENERATOR] Station coordinates (ABSOLUTE from file):`);
+        // The grid is drawn centred on the station area (see addGridToScene), so the
+        // stations are drawn relative to that same centre, using the same axis mapping:
+        // scene X = East (model Y), scene Y = North (model X).
+        const centerX = (profilesStats.xMin + profilesStats.xMax) / 2; // North
+        const centerY = (profilesStats.yMin + profilesStats.yMax) / 2; // East
+
+        console.log(`[COARSE GENERATOR] Station centre (model coords): X(N)=${centerX.toFixed(2)}, Y(E)=${centerY.toFixed(2)}`);
 
         stationsMap.forEach(({ x, y, z }, code) => {
-            // Use ABSOLUTE coordinates directly from file - NO transformation
-            const gridX = x;
-            const gridY = y;
+            // model X = North -> scene Y, model Y = East -> scene X
+            const sceneX = y - centerY;
+            const sceneY = x - centerX;
 
-            console.log(`[COARSE GENERATOR] Station ${code}: X=${x.toFixed(2)}, Y=${y.toFixed(2)}, Z=${z.toFixed(2)}`);
+            console.log(`[COARSE GENERATOR] Station ${code}: X(N)=${x.toFixed(2)}, Y(E)=${y.toFixed(2)}, Z=${z.toFixed(2)}`);
 
             // Create cone for this station
             const cone = new THREE.Mesh(coneGeometry, coneMaterial);
 
-            // Position cone at station location on surface (Z=0)
-            // Using ABSOLUTE coordinates from Profiles.dat
-            cone.position.set(gridX, gridY, coneHeight / 2);
+            // Position cone at station location on the surface (Z = 0)
+            cone.position.set(sceneX, sceneY, coneHeight / 2);
 
-            // Cone in Three.js points up by default along Y axis
-            // We need it to point up along Z axis (Cartesian)
-            // Rotate -90 degrees around X axis
-            cone.rotation.x = -Math.PI / 2;
+            // Cone in Three.js points along +Y by default; rotate +90 deg around X
+            // so the apex points up along +Z (out of the ground)
+            cone.rotation.x = Math.PI / 2;
 
             stationsGroup.add(cone);
         });
 
         this.scene.add(stationsGroup);
 
-        console.log(`[COARSE GENERATOR] Added ${stationsMap.size} observation stations (ABSOLUTE coordinates)`);
+        console.log(`[COARSE GENERATOR] Added ${stationsMap.size} observation stations (East -> scene X, North -> scene Y)`);
     }
 
     // Add coordinate axes with labels
+    // Scene X = model Y (East, green), scene Y = model X (North, red), scene -Z = depth
     addCoordinateAxes(maxExtent, xExtent, yExtent, zExtent) {
         // Axes parameters - increased length for better visibility
         const axisLength = maxExtent * 0.7;
@@ -430,35 +461,35 @@ export class CoarseGenerator {
         // Create axes geometry
         const axesGroup = new THREE.Group();
 
-        // X axis (Red)
+        // Scene X axis = model Y / East (Green)
         const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
             new THREE.Vector3(0, 0, 0),
             new THREE.Vector3(axisLength, 0, 0)
         ]);
-        const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 3 });
+        const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 3 });
         const xAxis = new THREE.Line(xAxisGeometry, xAxisMaterial);
         axesGroup.add(xAxis);
 
-        // X arrow
+        // East arrow
         const xArrowGeometry = new THREE.ConeGeometry(arrowSize * 0.5, arrowSize * 2, 8);
-        const xArrowMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const xArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
         const xArrow = new THREE.Mesh(xArrowGeometry, xArrowMaterial);
         xArrow.position.set(axisLength, 0, 0);
         xArrow.rotation.z = -Math.PI / 2;
         axesGroup.add(xArrow);
 
-        // Y axis (Green)
+        // Scene Y axis = model X / North (Red)
         const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
             new THREE.Vector3(0, 0, 0),
             new THREE.Vector3(0, axisLength, 0)
         ]);
-        const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 3 });
+        const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 3 });
         const yAxis = new THREE.Line(yAxisGeometry, yAxisMaterial);
         axesGroup.add(yAxis);
 
-        // Y arrow
+        // North arrow
         const yArrowGeometry = new THREE.ConeGeometry(arrowSize * 0.5, arrowSize * 2, 8);
-        const yArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const yArrowMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
         const yArrow = new THREE.Mesh(yArrowGeometry, yArrowMaterial);
         yArrow.position.set(0, axisLength, 0);
         axesGroup.add(yArrow);
@@ -481,17 +512,17 @@ export class CoarseGenerator {
         axesGroup.add(zArrow);
 
         // Add text labels using sprites
-        this.addAxisLabel('X (East)', labelDistance, 0, 0, 0xff0000, axesGroup);
-        this.addAxisLabel('Y (North)', 0, labelDistance, 0, 0x00ff00, axesGroup);
+        this.addAxisLabel('Y (East)', labelDistance, 0, 0, 0x00ff00, axesGroup);
+        this.addAxisLabel('X (North)', 0, labelDistance, 0, 0xff0000, axesGroup);
         this.addAxisLabel('Z (Depth)', 0, 0, -labelDistance, 0x0088ff, axesGroup);
 
-        // Add distance labels
-        const xLabel = `${(xExtent / 1000).toFixed(1)} km`;
-        const yLabel = `${(yExtent / 1000).toFixed(1)} km`;
+        // Add distance labels - scene X carries the model Y extent and vice versa
+        const eastLabel = `${(yExtent / 1000).toFixed(1)} km`;
+        const northLabel = `${(xExtent / 1000).toFixed(1)} km`;
         const zLabel = `${(zExtent / 1000).toFixed(1)} km`;
 
-        this.addAxisLabel(xLabel, axisLength * 0.5, -arrowSize * 3, 0, 0xff6666, axesGroup, 0.7);
-        this.addAxisLabel(yLabel, -arrowSize * 3, axisLength * 0.5, 0, 0x66ff66, axesGroup, 0.7);
+        this.addAxisLabel(eastLabel, axisLength * 0.5, -arrowSize * 3, 0, 0x66ff66, axesGroup, 0.7);
+        this.addAxisLabel(northLabel, -arrowSize * 3, axisLength * 0.5, 0, 0xff6666, axesGroup, 0.7);
         this.addAxisLabel(zLabel, -arrowSize * 3, 0, -axisLength * 0.5, 0x6666ff, axesGroup, 0.7);
 
         this.scene.add(axesGroup);
@@ -530,9 +561,13 @@ export class CoarseGenerator {
     addGridToScene(gridData) {
         const { xCells, yCells, zCells } = gridData;
 
-        // Calculate positions
-        const xPositions = this.calculatePositions(xCells);
-        const yPositions = this.calculatePositions(yCells);
+        // Scene axes follow the geographic convention used for MT models:
+        //   model X = North -> scene Y,  model Y = East -> scene X,  depth -> -scene Z.
+        // Feeding the cell arrays in this order is what keeps the picture oriented
+        // like the model file. Mapping model X onto scene X instead gives a
+        // left-handed (mirrored) frame, which reads as a 90 deg rotation of the grid.
+        const xPositions = this.calculatePositions(yCells); // scene X = East  (model Y)
+        const yPositions = this.calculatePositions(xCells); // scene Y = North (model X)
         const zPositions = this.calculatePositions(zCells);
 
         // Center the grid
@@ -557,11 +592,11 @@ export class CoarseGenerator {
         const colorTertiary = new THREE.Color(0x444466);     // Dim blue
         const colorDepth = new THREE.Color(0xff4444);        // Red for deep layers
 
-        // Calculate center region (where stations are)
-        const centerXStart = Math.floor(xCells.length * 0.3);
-        const centerXEnd = Math.floor(xCells.length * 0.7);
-        const centerYStart = Math.floor(yCells.length * 0.3);
-        const centerYEnd = Math.floor(yCells.length * 0.7);
+        // Calculate center region (where stations are) - indices follow the scene axes
+        const centerXStart = Math.floor(yCells.length * 0.3);
+        const centerXEnd = Math.floor(yCells.length * 0.7);
+        const centerYStart = Math.floor(xCells.length * 0.3);
+        const centerYEnd = Math.floor(xCells.length * 0.7);
 
         // Draw horizontal slices (XY planes at different depths)
         const layersToShow = [0, 1, 2, 5, 10, 15, 20, 30, 40, Math.floor(zCells.length * 0.8), zCells.length];

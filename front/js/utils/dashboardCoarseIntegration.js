@@ -103,11 +103,11 @@ export function initCoarseGenerator() {
                             <div class="stat-value">${profilesStats.numPeriods}</div>
                         </div>
                         <div>
-                            <div class="stat-label">X диапазон (м)</div>
+                            <div class="stat-label">X (север) диапазон</div>
                             <div class="stat-value">${(profilesStats.xRange / 1000).toFixed(1)} км</div>
                         </div>
                         <div>
-                            <div class="stat-label">Y диапазон (м)</div>
+                            <div class="stat-label">Y (восток) диапазон</div>
                             <div class="stat-value">${(profilesStats.yRange / 1000).toFixed(1)} км</div>
                         </div>
                     </div>
@@ -182,11 +182,9 @@ export function initCoarseGenerator() {
                     const yExtent = coarseData.yCells.reduce((a, b) => a + b, 0);
                     const zExtent = coarseData.zCells.reduce((a, b) => a + b, 0);
 
-                    // Calculate padding cells
-                    const nCoreX = Math.max(Math.floor(config.nX * 0.35), 6);
-                    const nPaddingX = Math.floor((config.nX - nCoreX) / 2);
-                    const nCoreY = Math.max(Math.floor(config.nY * 0.35), 6);
-                    const nPaddingY = Math.floor((config.nY - nCoreY) / 2);
+                    // Actual padding cell counts reported by the generator
+                    const nPaddingX = coarseData.layout.nPaddingX;
+                    const nPaddingY = coarseData.layout.nPaddingY;
 
                     document.getElementById('grid-stats').innerHTML = `
                         <div class="stat-item">
@@ -202,19 +200,19 @@ export function initCoarseGenerator() {
                             <div class="stat-value">${profilesStats.numStations}</div>
                         </div>
                         <div class="stat-item">
-                            <div class="stat-label">X расширение</div>
-                            <div class="stat-value">${nPaddingX * 2} ячеек</div>
+                            <div class="stat-label">X (север) расширение</div>
+                            <div class="stat-value">${nPaddingX} ячеек</div>
                         </div>
                         <div class="stat-item">
-                            <div class="stat-label">Y расширение</div>
-                            <div class="stat-value">${nPaddingY * 2} ячеек</div>
+                            <div class="stat-label">Y (восток) расширение</div>
+                            <div class="stat-value">${nPaddingY} ячеек</div>
                         </div>
                         <div class="stat-item">
-                            <div class="stat-label">X протяженность</div>
+                            <div class="stat-label">X (север) протяженность</div>
                             <div class="stat-value">${(xExtent / 1000).toFixed(1)} км</div>
                         </div>
                         <div class="stat-item">
-                            <div class="stat-label">Y протяженность</div>
+                            <div class="stat-label">Y (восток) протяженность</div>
                             <div class="stat-value">${(yExtent / 1000).toFixed(1)} км</div>
                         </div>
                         <div class="stat-item">

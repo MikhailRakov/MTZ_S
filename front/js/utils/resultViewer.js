@@ -172,14 +172,17 @@ export class ResultViewer {
     addModelToScene(modelData) {
         const { nX, nY, nZ, xCells, yCells, zCells, rhoValues } = modelData;
 
-        // Calculate cell positions
-        const xPositions = this.calculatePositions(xCells);
-        const yPositions = this.calculatePositions(yCells);
+        // Scene axes follow the geographic convention used for MT models:
+        //   model X = North -> scene Y,  model Y = East -> scene X,  depth -> -scene Z.
+        // Mapping model X onto scene X instead gives a left-handed (mirrored) frame,
+        // which reads as a 90 deg rotation of the model.
+        const eastPositions = this.calculatePositions(yCells);   // scene X
+        const northPositions = this.calculatePositions(xCells);  // scene Y
         const zPositions = this.calculatePositions(zCells);
 
         // Center the grid
-        const xOffset = -(xPositions[xPositions.length - 1] / 2);
-        const yOffset = -(yPositions[yPositions.length - 1] / 2);
+        const eastOffset = -(eastPositions[eastPositions.length - 1] / 2);
+        const northOffset = -(northPositions[northPositions.length - 1] / 2);
 
         // Calculate resistivity range for color mapping
         const validRho = rhoValues.filter(v => v > 0);
@@ -211,11 +214,12 @@ export class ResultViewer {
                     const rho = rhoValues[index];
                     if (rho <= 0) continue;
 
-                    // Cell boundaries
-                    const x1 = xPositions[i] + xOffset;
-                    const x2 = xPositions[i + 1] + xOffset;
-                    const y1 = yPositions[j] + yOffset;
-                    const y2 = yPositions[j + 1] + yOffset;
+                    // Cell boundaries: i indexes model X (North, scene Y),
+                    // j indexes model Y (East, scene X)
+                    const x1 = eastPositions[j] + eastOffset;
+                    const x2 = eastPositions[j + 1] + eastOffset;
+                    const y1 = northPositions[i] + northOffset;
+                    const y2 = northPositions[i + 1] + northOffset;
                     const z1 = -zPositions[k];
                     const z2 = -zPositions[k + 1];
 
