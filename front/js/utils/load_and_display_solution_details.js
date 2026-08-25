@@ -1,5 +1,5 @@
 //load_and_display_solution_details.js
-import { apiCall } from './api.js';
+import { apiCall, apiCallWithTimeout } from './api.js';
 import { setCurrentSolutionID } from './upload_file_form.js';
 import { resetCoarseGenerator } from './dashboardCoarseIntegration.js';
 import { ResultViewer } from './resultViewer.js';
@@ -355,10 +355,18 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
 
     try {
         console.log(`[SOLUTION DETAILS] Отправка запроса на /api/users/self/solutions/${solutionID}`);
-        const solutionData = await apiCall(`/api/users/self/solutions/${solutionID}`, 'GET', null, {}, idToken);
+        const solutionData = await apiCallWithTimeout(`/api/users/self/solutions/${solutionID}`, 'GET', null, {}, idToken, 5000);
+
+        // Fetch solution status with timeout
+        let statusData = { status: 'unknown', message: 'Failed to load status' };
+        try {
+            statusData = await apiCallWithTimeout(`/api/users/self/solutions/${solutionID}/status`, 'GET', null, {}, idToken, 3000);
+        } catch (statusError) {
+            console.warn(`[SOLUTION DETAILS] Failed to fetch status for ${solutionID}:`, statusError);
+        }
 
         console.log(`[SOLUTION DETAILS] Получены данные решения ${solutionID}:`, solutionData);
-        
+
         const solutionName = solutionData.name || 'Без названия';
         //const createdAtString = "01.03.2026";
         const createdAtString =new Date(solutionData['create_date']).toLocaleString(undefined,{
@@ -368,12 +376,27 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
             hour: '2-digit',
             minute: '2-digit',
         });
+
+        const status = statusData.status || 'unknown';
+        const statusMessage = statusData.message || '';
+        const statusClass = getStatusClass(status);
+        const statusIcon = getStatusIcon(status);
+        const formattedStatus = formatStatus(status);
+
         let solutionInfoHTML = `
             <h3>Информация о решении</h3>
-            <p><strong>Название:</strong> ${solutionName}</p>
-            <!-- <p><strong>ID:</strong> ${solutionData.id}</p> -->
-            <p><strong>Дата создания:</strong> ${createdAtString}</p>
-            <!-- Здесь можно добавить отображение загруженных файлов -->
+            <div class="solution-header">
+                <div class="solution-title">
+                    <h4>${solutionName}</h4>
+                    <span class="solution-status ${statusClass}" title="${statusMessage}">
+                        ${statusIcon} ${formattedStatus}
+                    </span>
+                </div>
+            </div>
+            <div class="solution-meta">
+                <p><strong>ID:</strong> ${solutionData.id}</p>
+                <p><strong>Дата создания:</strong> ${createdAtString}</p>
+            </div>
         `;
 
         // --- КОНЕЦ ИЗМЕНЕНИЙ ---
@@ -426,4 +449,75 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
 
     }
 
+}
+
+// Helper functions for status display (shared with load_and_display_solutions.js)
+function getStatusClass(status) {
+    switch (status) {
+        case 'completed':
+        case 'success':
+        case 'finished':
+            return 'status-success';
+        case 'running':
+        case 'processing':
+        case 'in_progress':
+            return 'status-running';
+        case 'pending':
+        case 'queued':
+        case 'waiting':
+            return 'status-pending';
+        case 'failed':
+        case 'error':
+            return 'status-error';
+        case 'cancelled':
+        case 'canceled':
+            return 'status-cancelled';
+        default:
+            return 'status-unknown';
+    }
+}
+
+function getStatusIcon(status) {
+    switch (status) {
+        case 'completed':
+        case 'success':
+        case 'finished':
+            return '✅';
+        case 'running':
+        case 'processing':
+        case 'in_progress':
+            return '⚙️';
+        case 'pending':
+        case 'queued':
+        case 'waiting':
+            return '⏳';
+        case 'failed':
+        case 'error':
+            return '❌';
+        case 'cancelled':
+        case 'canceled':
+            return '🚫';
+        default:
+            return '❓';
+    }
+}
+
+function formatStatus(status) {
+    const statusMap = {
+        'completed': 'Завершено',
+        'success': 'Успешно',
+        'finished': 'Готово',
+        'running': 'Выполняется',
+        'processing': 'Обработка',
+        'in_progress': 'В процессе',
+        'pending': 'Ожидание',
+        'queued': 'В очереди',
+        'waiting': 'Ожидание',
+        'failed': 'Ошибка',
+        'error': 'Ошибка',
+        'cancelled': 'Отменено',
+        'canceled': 'Отменено',
+        'unknown': 'Неизвестно'
+    };
+    return statusMap[status] || status;
 }

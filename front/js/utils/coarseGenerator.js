@@ -2,6 +2,27 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+// Defaults for the automatic grid size suggestion.
+// Horizontal cell size is derived from the station spacing, the model boundary
+// and bottom from the skin depth at the longest period: d = 503 * sqrt(rho * T).
+export const GRID_DEFAULTS = {
+    cellsPerSpacing: 1.5,      // core cell size = station spacing / this
+    boundarySkin: 2.0,         // distance from the outermost station to the side boundary, in skin depths
+    depthSkin: 2.5,            // model bottom, in skin depths at the longest period
+    padding: 1.2,              // core zone = station extent * this (kept internal, not in the UI)
+    growthFactor: 1.15,        // geometric growth of padding cells and deep Z layers
+    rhoBackground: 100,        // both the starting model value and the rho used for skin depth
+    zSkinGrowth: 1.05,         // slow growth of the near-surface Z layers
+    zRefineFactor: 0.5,        // fine Z layers reach 0.5 * skin depth at the shortest period
+    minCells: 10,
+    maxCells: 200,
+    minCellSize: 200,          // sanity clamps for the target horizontal cell size, m
+    maxCellSize: 200000,
+    fallbackCellSize: 30000    // used when no target cell size is supplied at all
+};
+
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
 export class CoarseGenerator {
     constructor() {
         this.profilesData = null;
@@ -54,8 +75,194 @@ export class CoarseGenerator {
             xRange: Math.max(...xCoords) - Math.min(...xCoords),
             yRange: Math.max(...yCoords) - Math.min(...yCoords),
             stations: Array.from(stationsMap.keys()),
+            // Per-axis coordinate lists, used to derive the station spacing
+            xCoords,
+            yCoords,
             periods: Array.from(periods).sort((a, b) => a - b)
         };
+    }
+
+    // Skin depth for a homogeneous half-space: d = 503 * sqrt(rho / f) = 503 * sqrt(rho * T)
+    skinDepth(rho, periodSec) {
+        if (!(rho > 0) || !(periodSec > 0)) return NaN;
+        return 503 * Math.sqrt(rho * periodSec);
+    }
+
+    // Representative station spacing along one axis.
+    // Uses the MEDIAN gap between distinct coordinates, not the minimum: stations
+    // often form a cross, so stations of the perpendicular profile share a
+    // coordinate and the smallest gap would just be an outlier.
+    axisSpacing(coords) {
+        if (!Array.isArray(coords) || coords.length < 2) return NaN;
+
+        const unique = Array.from(new Set(coords.map(v => Math.round(v)))).sort((a, b) => a - b);
+        if (unique.length < 2) return NaN;
+
+        const gaps = [];
+        for (let i = 1; i < unique.length; i++) {
+            const gap = unique[i] - unique[i - 1];
+            if (gap > 1) gaps.push(gap);
+        }
+        if (!gaps.length) return NaN;
+
+        gaps.sort((a, b) => a - b);
+        return gaps[Math.floor(gaps.length / 2)];
+    }
+
+    // Smallest n such that a geometric run of n cells spans at least `distance`.
+    //   offset = 1: sum_{i=1..n} startSize * g^i   (X/Y padding - the first cell is already grown)
+    //   offset = 0: sum_{i=0..n-1} startSize * g^i (Z layers - the run starts at startSize itself)
+    geometricCount(startSize, growthFactor, distance, offset = 1) {
+        if (!(startSize > 0) || !(distance > 0)) return 0;
+
+        const g = growthFactor;
+        const first = offset === 1 ? startSize * g : startSize;
+
+        if (!(g > 1.000001)) return Math.max(1, Math.ceil(distance / first));
+
+        const n = Math.log(1 + (distance * (g - 1)) / first) / Math.log(g);
+        return Math.max(1, Math.ceil(n - 1e-9));
+    }
+
+    // Total length of such a geometric run of n cells
+    geometricSum(startSize, growthFactor, n, offset = 1) {
+        if (!(startSize > 0) || n <= 0) return 0;
+
+        const g = growthFactor;
+        const first = offset === 1 ? startSize * g : startSize;
+
+        if (!(g > 1.000001)) return first * n;
+
+        return (first * (Math.pow(g, n) - 1)) / (g - 1);
+    }
+
+    // Suggest the cell count for one horizontal axis
+    suggestAxis(min, max, coords, o, ctx, axisLabel, notes) {
+        const range = Math.max(max - min, 0);
+
+        // Station spacing: median gap -> even spread over the range -> skin depth
+        let spacing = this.axisSpacing(coords);
+        let spacingSource = 'median';
+
+        if (!(spacing > 0)) {
+            const nUnique = new Set((coords || []).map(v => Math.round(v))).size;
+            if (nUnique > 1 && range > 0) {
+                spacing = range / (nUnique - 1);
+                spacingSource = 'range';
+            }
+        }
+        if (!(spacing > 0)) {
+            spacing = (ctx.skinMin / 10) * o.cellsPerSpacing;
+            spacingSource = 'skin';
+            notes.push(`${axisLabel}: шаг станций определить нельзя, размер ячейки взят от скин-слоя`);
+        }
+
+        const wanted = spacing / o.cellsPerSpacing;
+        const target = clamp(wanted, o.minCellSize, o.maxCellSize);
+        if (Math.abs(target - wanted) > 1) {
+            notes.push(`${axisLabel}: целевой размер ячейки ограничен до ${(target / 1000).toFixed(1)} км`);
+        }
+
+        const coreExtent = Math.max(range * o.padding, target);
+        const coreHalf = Math.max(1, Math.ceil(coreExtent / 2 / target));
+        const padHalf = Math.max(1, this.geometricCount(target, o.growthFactor, ctx.boundaryDistance, 1));
+
+        // Always even -> mirror-symmetric without a centre cell, like the reference file
+        let nCells = 2 * (coreHalf + padHalf);
+        const maxEven = o.maxCells - (o.maxCells % 2);
+        const minEven = o.minCells + (o.minCells % 2);
+
+        if (nCells > maxEven) {
+            notes.push(`${axisLabel}: нужно ${nCells} ячеек, ограничено до ${maxEven}` +
+                ` — ячейка ядра будет крупнее целевой`);
+            nCells = maxEven;
+        }
+        if (nCells < minEven) nCells = minEven;
+
+        return { spacing, spacingSource, target, coreExtent, coreHalf, padHalf, nCells };
+    }
+
+    // Derive the whole grid configuration from the data.
+    // Pure function of (profilesStats, overrides) - safe to call on every form change.
+    suggestGridConfig(profilesStats, overrides = {}) {
+        const o = { ...GRID_DEFAULTS, ...overrides };
+        const notes = [];
+
+        // Period range -> skin depths
+        const periods = (profilesStats.periods || []).filter(v => v > 0);
+        let skinMin = this.skinDepth(o.rhoBackground, periods[0]);
+        let skinMax = this.skinDepth(o.rhoBackground, periods[periods.length - 1]);
+
+        if (!(skinMin > 0) || !(skinMax > 0)) {
+            skinMin = this.skinDepth(o.rhoBackground, 10);
+            skinMax = this.skinDepth(o.rhoBackground, 10000);
+            notes.push('Периоды в Profiles.dat не найдены, скин-слой взят для T = 10…10000 с');
+        }
+
+        const boundaryDistance = o.boundarySkin * skinMax;
+        const targetDepth = o.depthSkin * skinMax;
+        const ctx = { boundaryDistance, skinMin, skinMax };
+
+        // Horizontal axes - each one gets its own cell size, because the station
+        // spacing differs per axis (the reference file has 30 km on X, 60 km on Y)
+        const ax = this.suggestAxis(profilesStats.xMin, profilesStats.xMax,
+            profilesStats.xCoords, o, ctx, 'X (север)', notes);
+        const ay = this.suggestAxis(profilesStats.yMin, profilesStats.yMax,
+            profilesStats.yCoords, o, ctx, 'Y (восток)', notes);
+
+        // Vertical axis: fine near-surface layers resolve the shortest period,
+        // deep layers grow until the model bottom reaches targetDepth
+        const zFirstLayer = clamp(Math.round(skinMin / 30 / 10) * 10, 20, 2000);
+        const nSkinZ = Math.min(20,
+            Math.max(1, this.geometricCount(zFirstLayer, o.zSkinGrowth, o.zRefineFactor * skinMin, 0)));
+        const fineDepth = this.geometricSum(zFirstLayer, o.zSkinGrowth, nSkinZ, 0);
+
+        // generateZCells keeps multiplying by zSkinGrowth once more before switching,
+        // so the first deep layer starts here:
+        const deepStart = zFirstLayer * Math.pow(o.zSkinGrowth, nSkinZ);
+        const nDeepZ = this.geometricCount(deepStart, o.growthFactor,
+            Math.max(0, targetDepth - fineDepth), 0);
+
+        let nZ = nSkinZ + nDeepZ;
+        if (nZ > o.maxCells) {
+            notes.push(`Z: нужно ${nZ} слоёв, ограничено до ${o.maxCells}`);
+            nZ = o.maxCells;
+        }
+        nZ = Math.max(nZ, o.minCells);
+
+        const suggestion = {
+            nX: ax.nCells,
+            nY: ay.nCells,
+            nZ,
+            cellSizeX: ax.target,
+            cellSizeY: ay.target,
+            zFirstLayer,
+            nSkinZ,
+            growthFactor: o.growthFactor,
+            rhoBackground: o.rhoBackground,
+            boundarySkin: o.boundarySkin,
+            depthSkin: o.depthSkin,
+            padding: o.padding,
+            spacingX: ax.spacing,
+            spacingY: ay.spacing,
+            skinMin,
+            skinMax,
+            boundaryDistance,
+            targetDepth,
+            nCoreHalfX: ax.coreHalf,
+            nPadHalfX: ax.padHalf,
+            nCoreHalfY: ay.coreHalf,
+            nPadHalfY: ay.padHalf,
+            notes
+        };
+
+        console.log('[GRID AUTO]', `${suggestion.nX} x ${suggestion.nY} x ${suggestion.nZ}`,
+            `| ячейка X ${(ax.target / 1000).toFixed(1)} км (шаг ${(ax.spacing / 1000).toFixed(1)} км)`,
+            `| ячейка Y ${(ay.target / 1000).toFixed(1)} км (шаг ${(ay.spacing / 1000).toFixed(1)} км)`,
+            `| δ(T_min) ${(skinMin / 1000).toFixed(1)} км, δ(T_max) ${(skinMax / 1000).toFixed(1)} км`,
+            `| граница ${(boundaryDistance / 1000).toFixed(0)} км, дно ${(targetDepth / 1000).toFixed(0)} км`);
+
+        return suggestion;
     }
 
     // Generate X/Y cells with proper geometric progression (ModEM/MT3D style)
@@ -375,10 +582,11 @@ export class CoarseGenerator {
     addObservationStations(profilesStats, gridData) {
         if (!this.profilesData) return;
 
-        const { xCells, yCells } = gridData;
+        const { xCells, yCells, zCells } = gridData;
         const xExtent = xCells.reduce((a, b) => a + b, 0);
         const yExtent = yCells.reduce((a, b) => a + b, 0);
-        const maxExtent = Math.max(xExtent, yExtent);
+        const zExtent = zCells.reduce((a, b) => a + b, 0);
+        const maxExtent = Math.max(xExtent, yExtent, zExtent);
 
         // Parse stations from profiles data - get unique station coordinates
         const lines = this.profilesData.split('\n');
@@ -400,20 +608,6 @@ export class CoarseGenerator {
             }
         }
 
-        // Create cone geometry for stations
-        const coneHeight = maxExtent * 0.03;
-        const coneRadius = maxExtent * 0.015;
-        const coneGeometry = new THREE.ConeGeometry(coneRadius, coneHeight, 8);
-
-        // Material for station cones - bright orange/yellow
-        const coneMaterial = new THREE.MeshPhongMaterial({
-            color: 0xFFAA00,
-            emissive: 0xFF6600,
-            emissiveIntensity: 0.3,
-            shininess: 30,
-            transparent: false
-        });
-
         // Group for all stations
         const stationsGroup = new THREE.Group();
 
@@ -425,29 +619,73 @@ export class CoarseGenerator {
 
         console.log(`[COARSE GENERATOR] Station centre (model coords): X(N)=${centerX.toFixed(2)}, Y(E)=${centerY.toFixed(2)}`);
 
+        // Cone size proportional to grid extent for better visibility
+        // Use a fraction of the max extent so cones are visible at any scale
+        const coneHeight = Math.max(500, maxExtent * 0.015);   // At least 500m, or 1.5% of grid extent
+        const coneRadius = Math.max(250, maxExtent * 0.0075);  // At least 250m, or 0.75% of grid extent
+        const coneGeometry = new THREE.ConeGeometry(coneRadius, coneHeight, 8);
+
+        // Material for station cones - bright orange/yellow with glow effect
+        const coneMaterial = new THREE.MeshPhongMaterial({
+            color: 0xFFAA00,
+            emissive: 0xFF6600,
+            emissiveIntensity: 0.5,
+            shininess: 50,
+            transparent: false
+        });
+        // Render cones after the surface plane
+        coneMaterial.renderOrder = 1;
+
         stationsMap.forEach(({ x, y, z }, code) => {
             // model X = North -> scene Y, model Y = East -> scene X
             const sceneX = y - centerY;
             const sceneY = x - centerX;
 
-            console.log(`[COARSE GENERATOR] Station ${code}: X(N)=${x.toFixed(2)}, Y(E)=${y.toFixed(2)}, Z=${z.toFixed(2)}`);
+            console.log(`[COARSE GENERATOR] Station ${code}: X(N)=${x.toFixed(2)}, Y(E)=${y.toFixed(2)}, Z=${z.toFixed(2)} -> Scene: X=${sceneX.toFixed(2)}, Y=${sceneY.toFixed(2)}`);
 
             // Create cone for this station
             const cone = new THREE.Mesh(coneGeometry, coneMaterial);
 
             // Position cone at station location on the surface (Z = 0)
+            // Cone base sits on the surface (Z=0), tip points UP (+Z direction) for visibility
             cone.position.set(sceneX, sceneY, coneHeight / 2);
 
-            // Cone in Three.js points along +Y by default; rotate +90 deg around X
-            // so the apex points up along +Z (out of the ground)
-            cone.rotation.x = Math.PI / 2;
+            // Cone in Three.js points along +Y by default; rotate -90 deg around X
+            // so the apex points UP along +Z (visible above surface)
+            cone.rotation.x = -Math.PI / 2;
+
+            // Add station label
+            const labelCanvas = document.createElement('canvas');
+            const labelContext = labelCanvas.getContext('2d');
+            labelCanvas.width = 256;
+            labelCanvas.height = 64;
+            labelContext.fillStyle = '#FFAA00';
+            labelContext.font = 'bold 32px Arial';
+            labelContext.textAlign = 'center';
+            labelContext.textBaseline = 'middle';
+            labelContext.fillText(code, 128, 32);
+
+            const labelTexture = new THREE.CanvasTexture(labelCanvas);
+            const labelMaterial = new THREE.SpriteMaterial({
+                map: labelTexture,
+                transparent: true,
+                depthTest: false,
+                depthWrite: false
+            });
+            // Render labels on top
+            labelMaterial.renderOrder = 2;
+            const labelSprite = new THREE.Sprite(labelMaterial);
+            labelSprite.position.set(sceneX, sceneY, coneHeight + 100);
+            labelSprite.scale.set(coneRadius * 4, coneRadius, 1);
 
             stationsGroup.add(cone);
+            stationsGroup.add(labelSprite);
         });
 
         this.scene.add(stationsGroup);
 
-        console.log(`[COARSE GENERATOR] Added ${stationsMap.size} observation stations (East -> scene X, North -> scene Y)`);
+        console.log(`[COARSE GENERATOR] Added ${stationsMap.size} observation stations with labels (East -> scene X, North -> scene Y)`);
+        console.log(`[COARSE GENERATOR] Cone size: height=${coneHeight.toFixed(0)}m, radius=${coneRadius.toFixed(0)}m (grid extent: ${maxExtent.toFixed(0)}m)`);
     }
 
     // Add coordinate axes with labels
@@ -460,6 +698,8 @@ export class CoarseGenerator {
 
         // Create axes geometry
         const axesGroup = new THREE.Group();
+        // Render axes after grid but before cones/labels
+        axesGroup.renderOrder = 1;
 
         // Scene X axis = model Y / East (Green)
         const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
@@ -767,6 +1007,8 @@ export class CoarseGenerator {
         });
 
         this.gridMesh = new THREE.LineSegments(geometry, material);
+        // Render grid before cones and labels
+        this.gridMesh.renderOrder = 0;
         this.scene.add(this.gridMesh);
 
         // Add semi-transparent surface plane at Z=0 (Cartesian coords)
@@ -784,6 +1026,8 @@ export class CoarseGenerator {
         const plane = new THREE.Mesh(planeGeometry, planeMaterial);
         // No rotation needed - plane is already in XY plane with camera.up = (0,0,1)
         plane.position.z = 0;
+        // Render plane first (behind other objects)
+        plane.renderOrder = 0;
         this.scene.add(plane);
     }
 
@@ -804,15 +1048,22 @@ export class CoarseGenerator {
             throw new Error('No coarse data generated yet');
         }
 
-        const blob = new Blob([this.generatedCoarse.content], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        try {
+            const blob = new Blob([this.generatedCoarse.content], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            console.log(`[COARSE GENERATOR] File ${filename} downloaded successfully`);
+        } catch (error) {
+            console.error('[COARSE GENERATOR] Download failed:', error);
+            throw new Error(`Download failed: ${error.message}`);
+        }
     }
 
     // Get generated coarse as File object

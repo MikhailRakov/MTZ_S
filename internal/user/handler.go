@@ -3,6 +3,7 @@ package user
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -740,6 +741,104 @@ func (h *handler) GetPresignedURL(w http.ResponseWriter, r *http.Request, ps htt
 	})
 }
 
+// GetSolutionStatus fetches the status.json file from S3 for a solution
+func (h *handler) GetSolutionStatus(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// 1. Аутентификация
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error":"authorization header is required"}`, http.StatusUnauthorized)
+		return
+	}
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		http.Error(w, `{"error":"invalid authorization header format"}`, http.StatusUnauthorized)
+		return
+	}
+	idTokenStr := authHeader[len(bearerPrefix):]
+	token, err := h.authClient.VerifyIDToken(r.Context(), idTokenStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid id token"}`, http.StatusUnauthorized)
+		return
+	}
+	uid := token.UID
+
+	// 2. Получаем solutionID из параметров URL
+	solutionID := ps.ByName("solutionID")
+	if solutionID == "" {
+		http.Error(w, `{"error":"solution_id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 3. Формируем S3 ключ для status.json
+	s3Key := fmt.Sprintf("users/%s/solutions/%s/status.json", uid, solutionID)
+	bucketName := os.Getenv("AWS_S3_BUCKET_NAME")
+
+	// 4. Получаем файл из S3 с таймаутом
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	getInput := &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(s3Key),
+	}
+
+	result, err := h.s3Client.GetObject(ctx, getInput)
+	if err != nil {
+		// Check if it's a "not found" error - AWS SDK v2 uses different error types
+		errStr := err.Error()
+		h.logger.Infof("S3 GetObject error for %s: %v", s3Key, err)
+		if strings.Contains(errStr, "NotFound") ||
+		   strings.Contains(errStr, "NoSuchKey") ||
+		   strings.Contains(errStr, "404") ||
+		   strings.Contains(errStr, "Not Found") ||
+		   strings.Contains(errStr, "timeout") ||
+		   strings.Contains(errStr, "context deadline exceeded") {
+			// Return a default status if file doesn't exist or timeout
+			h.logger.Infof("Status file not found or timeout for %s, returning default", s3Key)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":       "unknown",
+				"message":      "Status file not found",
+				"solution_id":  solutionID,
+			})
+			return
+		}
+		h.logger.Errorf("Failed to get S3 object %s: %v", s3Key, err)
+		http.Error(w, `{"error":"failed to fetch status"}`, http.StatusInternalServerError)
+		return
+	}
+	defer result.Body.Close()
+
+	// 5. Читаем и парсим JSON с таймаутом
+	readCtx, readCancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer readCancel()
+
+	body, err := io.ReadAll(io.LimitReader(result.Body, 1024*1024)) // Limit to 1MB
+	if err != nil {
+		h.logger.Errorf("Failed to read status file %s: %v", s3Key, err)
+		http.Error(w, `{"error":"failed to read status"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Check if context was cancelled during read
+	select {
+	case <-readCtx.Done():
+		h.logger.Warnf("Read timeout for status file %s", s3Key)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":       "unknown",
+			"message":      "Status read timeout",
+			"solution_id":  solutionID,
+		})
+		return
+	default:
+	}
+
+	// 6. Возвращаем статус как есть (предполагаем, что это валидный JSON)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
 // Register регистрирует маршруты для обработчиков.
 func (h *handler) Register(router *httprouter.Router) {
 	// === МАРШРУТЫ С :solutionID (должны быть вместе) ===
@@ -747,6 +846,7 @@ func (h *handler) Register(router *httprouter.Router) {
 	router.GET("/api/users/self/solutions/:solutionID/files", h.GetSolutionFiles)
 	router.GET("/api/users/self/solutions/:solutionID/files/*fileKey", h.GetSolutionFile)
 	router.GET("/api/users/self/solutions/:solutionID", h.GetSolutionByID)
+	router.GET("/api/users/self/solutions/:solutionID/status", h.GetSolutionStatus)
 
 	// === ОБЩИЕ МАРШРУТЫ ===
 	router.GET("/api/users/self/solutions", h.GetSolutions)

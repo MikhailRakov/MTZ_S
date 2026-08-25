@@ -7,9 +7,10 @@
  * @param {Object|null} data - Данные для отправки в теле запроса (для POST/PUT).
  * @param {Object} headers - Дополнительные заголовки.
  * @param {string} idToken - ID токен Firebase для авторизации.
+ * @param {Object} options - Дополнительные опции (timeout, signal).
  * @returns {Promise<any>} - Promise с данными ответа или ошибкой.
  */
-export async function apiCall(url, method = 'GET', data = null, headers = {}, idToken = null) {
+export async function apiCall(url, method = 'GET', data = null, headers = {}, idToken = null, options = {}) {
     const defaultHeaders = {
         'Content-Type': 'application/json',
         ...(idToken && { 'Authorization': `Bearer ${idToken}` })
@@ -32,6 +33,11 @@ export async function apiCall(url, method = 'GET', data = null, headers = {}, id
         }
     }
 
+    // Add signal for abort/timeout if provided
+    if (options.signal) {
+        config.signal = options.signal;
+    }
+
     console.log(`[API CALL] ${method} ${url}`, config);
     const response = await fetch(url, config);
 
@@ -50,6 +56,27 @@ export async function apiCall(url, method = 'GET', data = null, headers = {}, id
     } else {
         // Для других типов (например, пустой ответ 204) просто возвращаем response
         return response;
+    }
+}
+
+/**
+ * Wrapper for apiCall with timeout
+ * @param {string} url - URL эндпоинта API.
+ * @param {string} method - HTTP метод.
+ * @param {Object|null} data - Данные для отправки.
+ * @param {Object} headers - Дополнительные заголовки.
+ * @param {string} idToken - ID токен Firebase.
+ * @param {number} timeoutMs - Таймаут в миллисекундах.
+ * @returns {Promise<any>}
+ */
+export async function apiCallWithTimeout(url, method = 'GET', data = null, headers = {}, idToken = null, timeoutMs = 5000) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await apiCall(url, method, data, headers, idToken, { signal: controller.signal });
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 

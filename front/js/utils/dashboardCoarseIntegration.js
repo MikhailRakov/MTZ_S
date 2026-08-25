@@ -83,6 +83,15 @@ export function initCoarseGenerator() {
                 generator.profilesData = profilesData;
                 profilesStats = generator.parseProfilesData(profilesData);
 
+                // Auto-suggest grid configuration based on profiles data
+                const suggestedConfig = generator.suggestGridConfig(profilesStats);
+
+                // Auto-fill form fields with suggested values (user can still modify)
+                document.getElementById('grid-nx').value = suggestedConfig.nX;
+                document.getElementById('grid-ny').value = suggestedConfig.nY;
+                document.getElementById('grid-nz').value = suggestedConfig.nZ;
+                document.getElementById('grid-z-first').value = suggestedConfig.zFirstLayer;
+
                 // Update UI
                 profilesUploadArea.innerHTML = `
                     <div style="font-size: 2em; margin-bottom: 10px;">✅</div>
@@ -111,6 +120,28 @@ export function initCoarseGenerator() {
                             <div class="stat-value">${(profilesStats.yRange / 1000).toFixed(1)} км</div>
                         </div>
                     </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; padding: 12px; background: var(--color-primary-light); border-radius: var(--radius-md);">
+                        <div>
+                            <div class="stat-label">Рекомендуемые X ячейки</div>
+                            <div class="stat-value" style="color: var(--color-primary);">${suggestedConfig.nX}</div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Рекомендуемые Y ячейки</div>
+                            <div class="stat-value" style="color: var(--color-primary);">${suggestedConfig.nY}</div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Рекомендуемые Z слои</div>
+                            <div class="stat-value" style="color: var(--color-primary);">${suggestedConfig.nZ}</div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Первый Z слой</div>
+                            <div class="stat-value" style="color: var(--color-primary);">${suggestedConfig.zFirstLayer} м</div>
+                        </div>
+                    </div>
+                    ${suggestedConfig.notes && suggestedConfig.notes.length > 0
+                        ? '<div style="margin-top: 12px; padding: 10px; background: var(--color-warning-light); border-radius: var(--radius-md); font-size: 0.85em; color: var(--color-warning);"><strong>⚠ Примечания:</strong><ul style="margin: 8px 0 0 18px;">' +
+                          suggestedConfig.notes.map(n => `<li>${n}</li>`).join('') + '</ul></div>'
+                        : ''}
                 `;
 
                 generatorControls.classList.remove('hidden');

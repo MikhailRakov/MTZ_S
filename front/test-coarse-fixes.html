@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Coarse Generator Fixes</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 { color: #667eea; }
+        .test-section {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #0f3460;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        #canvas-container {
+            width: 100%;
+            height: 600px;
+            background: #0a0a0f;
+            border-radius: 8px;
+            border: 1px solid #0f3460;
+        }
+        .log {
+            background: #0a0a0f;
+            color: #0f0;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .status { padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .status.success { background: #1b5e20; border: 1px solid #4caf50; }
+        .status.error { background: #b71c1c; border: 1px solid #f44336; }
+        .status.info { background: #0d47a1; border: 1px solid #2196f3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Coarse Generator Fixes</h1>
+
+        <div class="test-section">
+            <h3>1. Load Profiles.dat</h3>
+            <input type="file" id="profiles-input" accept=".dat" style="margin-right: 10px;">
+            <button id="load-btn" onclick="loadProfiles()">Load Profiles.dat</button>
+            <div id="load-status"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. Generate Coarse Grid</h3>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+                <label>nX: <input type="number" id="nx" value="44" min="10" max="100" style="margin-left: 5px;"></label>
+                <label>nY: <input type="number" id="ny" value="42" min="10" max="100" style="margin-left: 5px;"></label>
+                <label>nZ: <input type="number" id="nz" value="59" min="10" max="100" style="margin-left: 5px;"></label>
+                <label>Z First: <input type="number" id="zfirst" value="500" min="100" style="margin-left: 5px;"></label>
+            </div>
+            <button id="generate-btn" onclick="generateGrid()" disabled>Generate Grid</button>
+            <div id="generate-status"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>3. 3D Visualization</h3>
+            <div id="canvas-container"></div>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button id="download-btn" onclick="downloadCoarse()" disabled>💾 Download Coarse.dat</button>
+                <button id="reset-btn" onclick="resetTest()">🔄 Reset</button>
+            </div>
+            <div id="viz-status"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>Console Log</h3>
+            <div id="log" class="log"></div>
+        </div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import { CoarseGenerator } from './js/utils/coarseGenerator.js';
+
+        const logEl = document.getElementById('log');
+        let generator = new CoarseGenerator();
+        let profilesData = null;
+        let profilesStats = null;
+        let coarseData = null;
+
+        function log(msg, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+            logEl.innerHTML += `<div>${prefix} [${time}] ${msg}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(`[${type.toUpperCase()}] ${msg}`);
+        }
+
+        function setStatus(el, msg, type) {
+            el.innerHTML = `<div class="status ${type}">${msg}</div>`;
+        }
+
+        async function loadProfiles() {
+            const input = document.getElementById('profiles-input');
+            if (!input.files.length) {
+                setStatus(document.getElementById('load-status'), 'Please select a Profiles.dat file', 'error');
+                return;
+            }
+
+            const file = input.files[0];
+            setStatus(document.getElementById('load-status'), `Loading ${file.name}...`, 'info');
+
+            try {
+                const text = await file.text();
+                profilesData = text;
+                generator.profilesData = profilesData;
+                profilesStats = generator.parseProfilesData(profilesData);
+
+                setStatus(document.getElementById('load-status'),
+                    `✅ Loaded: ${profilesStats.numStations} stations, ${profilesStats.numPeriods} periods<br>` +
+                    `X: ${(profilesStats.xRange/1000).toFixed(1)} km, Y: ${(profilesStats.yRange/1000).toFixed(1)} km`,
+                    'success');
+
+                document.getElementById('generate-btn').disabled = false;
+                log(`Profiles loaded: ${profilesStats.numStations} stations, ${profilesStats.numPeriods} periods`, 'success');
+            } catch (e) {
+                setStatus(document.getElementById('load-status'), `Error: ${e.message}`, 'error');
+                log(`Load error: ${e.message}`, 'error');
+            }
+        }
+
+        async function generateGrid() {
+            if (!profilesStats) return;
+
+            setStatus(document.getElementById('generate-status'), 'Generating grid...', 'info');
+            document.getElementById('generate-btn').disabled = true;
+
+            try {
+                const config = {
+                    nX: parseInt(document.getElementById('nx').value),
+                    nY: parseInt(document.getElementById('ny').value),
+                    nZ: parseInt(document.getElementById('nz').value),
+                    zFirstLayer: parseFloat(document.getElementById('zfirst').value),
+                    padding: 1.2,
+                    growthFactor: 1.15,
+                    zGrowthFactor: 1.15,
+                    minCellSize: 30000,
+                    defaultRho: 100
+                };
+
+                coarseData = generator.generateCoarse(profilesStats, config);
+
+                const container = document.getElementById('canvas-container');
+                container.innerHTML = '';
+
+                generator.init3DVisualization(container, coarseData, profilesStats);
+
+                setStatus(document.getElementById('generate-status'),
+                    `✅ Grid generated: ${config.nX}×${config.nY}×${config.nZ} = ${(config.nX*config.nY*config.nZ).toLocaleString()} cells`,
+                    'success');
+                document.getElementById('download-btn').disabled = false;
+                log(`Grid generated successfully`, 'success');
+            } catch (e) {
+                setStatus(document.getElementById('generate-status'), `Error: ${e.message}`, 'error');
+                log(`Generation error: ${e.message}`, 'error');
+            } finally {
+                document.getElementById('generate-btn').disabled = false;
+            }
+        }
+
+        function downloadCoarse() {
+            if (!coarseData) return;
+
+            try {
+                generator.downloadCoarse('Coarse.dat');
+                setStatus(document.getElementById('viz-status'), '✅ File downloaded successfully!', 'success');
+                log('Download successful', 'success');
+            } catch (e) {
+                setStatus(document.getElementById('viz-status'), `Download error: ${e.message}`, 'error');
+                log(`Download error: ${e.message}`, 'error');
+            }
+        }
+
+        function resetTest() {
+            generator.dispose();
+            generator = new CoarseGenerator();
+            profilesData = null;
+            profilesStats = null;
+            coarseData = null;
+
+            document.getElementById('profiles-input').value = '';
+            document.getElementById('load-status').innerHTML = '';
+            document.getElementById('generate-status').innerHTML = '';
+            document.getElementById('viz-status').innerHTML = '';
+            document.getElementById('canvas-container').innerHTML = '';
+            document.getElementById('generate-btn').disabled = true;
+            document.getElementById('download-btn').disabled = true;
+            logEl.innerHTML = '';
+
+            log('Test reset', 'info');
+        }
+
+        log('Test page loaded. Please load a Profiles.dat file to begin.', 'info');
+    </script>
+</body>
+</html>
