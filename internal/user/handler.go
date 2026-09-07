@@ -591,6 +591,10 @@ func (h *handler) GetSolutionFile(w http.ResponseWriter, r *http.Request, ps htt
 		return
 	}
 
+	// httprouter возвращает параметр *fileKey с ведущим слэшем — убираем его,
+	// иначе проверка принадлежности файла пользователю ниже всегда падает
+	fileKey = strings.TrimPrefix(fileKey, "/")
+
 	// Decode URL-encoded fileKey
 	decodedKey, err := url.QueryUnescape(fileKey)
 	if err != nil {
@@ -788,18 +792,18 @@ func (h *handler) GetSolutionStatus(w http.ResponseWriter, r *http.Request, ps h
 		errStr := err.Error()
 		h.logger.Infof("S3 GetObject error for %s: %v", s3Key, err)
 		if strings.Contains(errStr, "NotFound") ||
-		   strings.Contains(errStr, "NoSuchKey") ||
-		   strings.Contains(errStr, "404") ||
-		   strings.Contains(errStr, "Not Found") ||
-		   strings.Contains(errStr, "timeout") ||
-		   strings.Contains(errStr, "context deadline exceeded") {
+			strings.Contains(errStr, "NoSuchKey") ||
+			strings.Contains(errStr, "404") ||
+			strings.Contains(errStr, "Not Found") ||
+			strings.Contains(errStr, "timeout") ||
+			strings.Contains(errStr, "context deadline exceeded") {
 			// Return a default status if file doesn't exist or timeout
 			h.logger.Infof("Status file not found or timeout for %s, returning default", s3Key)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"status":       "unknown",
-				"message":      "Status file not found",
-				"solution_id":  solutionID,
+				"status":      "unknown",
+				"message":     "Status file not found",
+				"solution_id": solutionID,
 			})
 			return
 		}
@@ -826,9 +830,9 @@ func (h *handler) GetSolutionStatus(w http.ResponseWriter, r *http.Request, ps h
 		h.logger.Warnf("Read timeout for status file %s", s3Key)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":       "unknown",
-			"message":      "Status read timeout",
-			"solution_id":  solutionID,
+			"status":      "unknown",
+			"message":     "Status read timeout",
+			"solution_id": solutionID,
 		})
 		return
 	default:

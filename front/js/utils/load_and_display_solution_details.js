@@ -9,27 +9,42 @@ let resultViewerInstance = null;
 
 export async function loadSolutionFiles(solutionId, idToken){
   currentIdToken = idToken; // Store token for later use
+  try {
+    const files = await fetchSolutionFiles(solutionId, idToken);
+    displaySolutionFiles(files, solutionId, idToken);
+  } catch (err) {
+    const container = document.getElementById('files-list');
+    const filesSection = document.getElementById('solution-files-container');
+    if (container && filesSection) {
+      container.innerHTML = `<p class="text-danger">Файлы ещё не готовы или произошла ошибка: ${err.message}</p>`;
+      filesSection.classList.remove('hidden');
+    }
+  }
+}
+
+// Возвращает список файлов решения из S3 (без отрисовки)
+async function fetchSolutionFiles(solutionId, idToken) {
+  const res = await fetch(`/api/users/self/solutions/${solutionId}/files`, {
+    headers: { 'Authorization': `Bearer ${idToken}` }
+  });
+
+  if (!res.ok) throw new Error('Не удалось получить список файлов');
+
+  const data = await res.json();
+  return data.files || [];
+}
+
+// Отрисовывает уже загруженный список файлов
+function displaySolutionFiles(files, solutionId, idToken) {
   const container = document.getElementById('files-list');
   const filesSection = document.getElementById('solution-files-container');
+  if (!container || !filesSection) return;
 
-  try {
-    const res = await fetch(`/api/users/self/solutions/${solutionId}/files`, {
-            headers: { 'Authorization': `Bearer ${idToken}` }
-        });
-
-    if (!res.ok) throw new Error('Не удалось получить список файлов');
-
-    const data = await res.json();
-
-    if (data.files && data.files.length > 0) {
-      filesSection.classList.remove('hidden');
-      renderFiles(data.files, container, solutionId, idToken);
-    } else {
-      filesSection.classList.add('hidden');
-    }
-  } catch (err) {
-    container.innerHTML = `<p class="text-danger">Файлы ещё не готовы или произошла ошибка: ${err.message}</p>`;
+  if (files && files.length > 0) {
     filesSection.classList.remove('hidden');
+    renderFiles(files, container, solutionId, idToken);
+  } else {
+    filesSection.classList.add('hidden');
   }
 }
 
@@ -349,21 +364,31 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
 
     solutionDetailsPlaceholder.textContent = 'Загрузка информации о решении...';
     solutionDetailsPlaceholder.classList.remove('hidden');
-    // Скрываем основной контейнер деи
+    // Скрываем все блоки: они появятся одновременно после загрузки всех данных
     solutionDetailsContainer.classList.add('hidden');
+    if (fileUploadSection) fileUploadSection.classList.add('hidden');
+    const filesSection = document.getElementById('solution-files-container');
+    if (filesSection) filesSection.classList.add('hidden');
    
 
     try {
-        console.log(`[SOLUTION DETAILS] Отправка запроса на /api/users/self/solutions/${solutionID}`);
-        const solutionData = await apiCallWithTimeout(`/api/users/self/solutions/${solutionID}`, 'GET', null, {}, idToken, 5000);
+        console.log(`[SOLUTION DETAILS] Загрузка данных решения ${solutionID} (инфо, статус, файлы из S3)`);
 
-        // Fetch solution status with timeout
-        let statusData = { status: 'unknown', message: 'Failed to load status' };
-        try {
-            statusData = await apiCallWithTimeout(`/api/users/self/solutions/${solutionID}/status`, 'GET', null, {}, idToken, 3000);
-        } catch (statusError) {
-            console.warn(`[SOLUTION DETAILS] Failed to fetch status for ${solutionID}:`, statusError);
-        }
+        // Сначала собираем ВСЕ данные — включая список файлов из S3 — и только
+        // после этого отображаем все блоки страницы одновременно
+        const [solutionData, statusData, files] = await Promise.all([
+            apiCallWithTimeout(`/api/users/self/solutions/${solutionID}`, 'GET', null, {}, idToken, 5000),
+            apiCallWithTimeout(`/api/users/self/solutions/${solutionID}/status`, 'GET', null, {}, idToken, 3000)
+                .catch(statusError => {
+                    console.warn(`[SOLUTION DETAILS] Failed to fetch status for ${solutionID}:`, statusError);
+                    return { status: 'unknown', message: 'Failed to load status' };
+                }),
+            fetchSolutionFiles(solutionID, idToken)
+                .catch(filesError => {
+                    console.warn(`[SOLUTION DETAILS] Failed to fetch files for ${solutionID}:`, filesError);
+                    return [];
+                }),
+        ]);
 
         console.log(`[SOLUTION DETAILS] Получены данные решения ${solutionID}:`, solutionData);
 
@@ -435,18 +460,16 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
             console.warn("[SOLUTION DETAILS] Элемент формы загрузки fileUploadSection не найден или не передан в elements");
         }
 
-    loadSolutionFiles(solutionID, idToken);
+        // Список файлов уже загружен — отображаем его вместе с остальными блоками
+        displaySolutionFiles(files, solutionID, idToken);
     } catch (error) {
         console.error(`[SOLUTION DETAILS] Ошибка при загрузке деталей решения ${solutionID}:`, error);
         solutionDetailsPlaceholder.textContent = `Ошибка загрузки информации о решении: ${error.message}`;
         solutionDetailsPlaceholder.classList.remove('hidden');
         solutionDetailsContainer.classList.add('hidden');
-
-        // --- НОВОЕ: Скрываем виджет в случае ошибки ---
-        if (sendToQueueWidget) sendToQueueWidget.classList.add('hidden');
-        // --- КОНЕЦ НОВОГО ---
-
-
+        if (fileUploadSection) fileUploadSection.classList.add('hidden');
+        const filesSectionOnError = document.getElementById('solution-files-container');
+        if (filesSectionOnError) filesSectionOnError.classList.add('hidden');
     }
 
 }
