@@ -3,6 +3,7 @@ import { apiCall, apiCallWithTimeout } from './api.js';
 import { setCurrentSolutionID } from './upload_file_form.js';
 import { resetCoarseGenerator } from './dashboardCoarseIntegration.js';
 import { ResultViewer } from './resultViewer.js';
+import { displayReadySolution } from './readySolutionBlock.js';
 
 let currentIdToken = null;
 let resultViewerInstance = null;
@@ -369,7 +370,9 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
     if (fileUploadSection) fileUploadSection.classList.add('hidden');
     const filesSection = document.getElementById('solution-files-container');
     if (filesSection) filesSection.classList.add('hidden');
-   
+    const readySection = document.getElementById('ready-solution-container');
+    if (readySection) readySection.classList.add('hidden');
+
 
     try {
         console.log(`[SOLUTION DETAILS] Загрузка данных решения ${solutionID} (инфо, статус, файлы из S3)`);
@@ -462,6 +465,9 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
 
         // Список файлов уже загружен — отображаем его вместе с остальными блоками
         displaySolutionFiles(files, solutionID, idToken);
+
+        // Блок "Готовое решение" (архив .zip с .vtr файлами)
+        displayReadySolution(files, solutionID, idToken);
     } catch (error) {
         console.error(`[SOLUTION DETAILS] Ошибка при загрузке деталей решения ${solutionID}:`, error);
         solutionDetailsPlaceholder.textContent = `Ошибка загрузки информации о решении: ${error.message}`;
@@ -470,6 +476,8 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
         if (fileUploadSection) fileUploadSection.classList.add('hidden');
         const filesSectionOnError = document.getElementById('solution-files-container');
         if (filesSectionOnError) filesSectionOnError.classList.add('hidden');
+        const readySectionOnError = document.getElementById('ready-solution-container');
+        if (readySectionOnError) readySectionOnError.classList.add('hidden');
     }
 
 }
