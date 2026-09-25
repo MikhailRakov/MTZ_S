@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><title>SimPEG MTZ → JSON</title>
+<style>
+body{font-family:sans-serif;max-width:720px;margin:40px auto;padding:0 20px;background:#f7f9fb}
+h1{font-size:1.4rem;color:#1a3a5c}
+.box{background:#fff;padding:24px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);margin-top:20px}
+input[type="file"]{margin:12px 0;padding:8px;border:1px solid #ccc;border-radius:6px}
+button{padding:10px 22px;background:#1a3a5c;color:#fff;border:none;border-radius:6px;cursor:pointer}
+button:hover{background:#2a558c}
+pre{background:#f0f2f5;padding:12px;border-radius:6px;overflow:auto;font-size:.85rem}
+</style>
+</head>
+<body>
+<h1>SimPEG MTZ — конвертер в браузере</h1>
+<div class="box">
+<p>Загрузите <strong>mtz_simpeg_results.npz</strong> (результат прямой задачи SimPEG).</p>
+<form id="f" action="/mtz/simpeg/upload" method="POST" enctype="multipart/form-data" target="res">
+<input type="file" name="npz" accept=".npz" required>
+<button type="submit">Отправить → конвертер</button>
+</form>
+<iframe name="res" style="width:100%;height:220px;border:0;margin-top:12px;background:#fff;border-radius:6px"></iframe>
+</div>
+<div class="box">
+<h3>Результаты (JSON)</h3>
+<p>После обработки в папке сервиса <code>simpeg_test/output/</code> появятся:</p>
+<ul>
+<li><code>model.json</code> — сетка + проводимость</li>
+<li><code>impedance.json</code> — импедансы по частотам</li>
+<li><code>metadata.json</code> — мета</li>
+</ul>
+<p>Также визуализация доступна в <code>simpeg_test/mtz_results.png</code>.</p>
+</div>
+</body>
+</html>

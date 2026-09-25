@@ -72,8 +72,16 @@
                     Загрузите файл профилей и сгенерируйте coarse сетку или загрузите готовую
                 </p>
 
-                <!-- Coarse Generator Section -->
-                <div class="coarse-generator-section">
+                <!-- Import Type Tabs -->
+                <div class="import-tabs">
+                    <button class="import-tab active" data-tab="profiles">📁 Profiles.dat</button>
+                    <button class="import-tab" data-tab="simpeg">🔬 SimPEG (.npz)</button>
+                </div>
+
+                <!-- Profiles.dat Import Tab Content -->
+                <div id="tab-profiles" class="import-tab-content active">
+                    <!-- Coarse Generator Section -->
+                    <div class="coarse-generator-section">
                     <div class="generator-header">
                         <h4 style="color: var(--color-primary); margin: 0;">📊 Генератор Coarse сетки</h4>
                         <button type="button" id="toggle-generator-btn" class="btn-icon">▼</button>
@@ -173,6 +181,47 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
+                <!-- SimPEG Import Tab Content -->
+                <div id="tab-simpeg" class="import-tab-content">
+                    <div class="simpeg-import-section">
+                        <div class="generator-header">
+                            <h4 style="color: var(--color-primary); margin: 0;">🔬 Импорт SimPEG (.npz)</h4>
+                        </div>
+                        <p style="color: var(--color-text-secondary); margin: 16px 0;">
+                            Загрузите файл результатов SimPEG (<code>mtz_simpeg_results.npz</code>). 
+                            Конвертация в <code>Profiles.dat</code> происходит в браузере.
+                        </p>
+                        <div class="generator-upload-area" id="simpeg-upload-area">
+                            <div style="font-size: 3em; margin-bottom: 10px;">📊</div>
+                            <p><strong>Загрузите .npz файл</strong></p>
+                            <p style="font-size: 0.9em; color: var(--color-text-tertiary); margin-top: 8px;">
+                                Содержит частоты, импедансы Zxy/Zyx и модель проводимости
+                            </p>
+                            <input type="file" id="simpeg-file-input" accept=".npz" style="display: none;">
+                        </div>
+
+                        <div id="simpeg-controls" class="generator-controls hidden">
+                            <div id="simpeg-info" class="profiles-info"></div>
+                            <button type="button" id="convert-simpeg-btn" class="btn" style="width: 100%; margin-top: 16px;">
+                                ⚙️ Конвертировать в Profiles.dat
+                            </button>
+                        </div>
+
+                        <div id="simpeg-result" class="grid-visualization hidden">
+                            <div class="viz-header">
+                                <h4 style="margin: 0; color: var(--color-primary);">✅ Конвертация завершена</h4>
+                                <div class="viz-controls">
+                                    <button type="button" id="download-profiles-btn" class="btn btn-success btn-sm">💾 Скачать Profiles.dat</button>
+                                    <button type="button" id="use-converted-profiles-btn" class="btn btn-sm">✓ Использовать для генерации Coarse</button>
+                                </div>
+                            </div>
+                            <div id="simpeg-stats" class="grid-stats"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
                 <!-- Traditional File Upload Form (Hidden, used programmatically) -->
                 <form id="file-upload-form" style="display: none;">

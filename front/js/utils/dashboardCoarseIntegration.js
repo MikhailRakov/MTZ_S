@@ -1,5 +1,6 @@
 // Dashboard Coarse Generator Integration
 import { CoarseGenerator } from './coarseGenerator.js';
+import { convertSimpegToProfiles } from './simpegProfilesConverter.js';
 
 let generatorInstance = null;
 
@@ -31,17 +32,51 @@ export function initCoarseGenerator() {
     const readyProfilesName = document.getElementById('ready-profiles-name');
     const readyCoarseName = document.getElementById('ready-coarse-name');
 
+    // Import Tabs Elements
+    const importTabs = document.querySelectorAll('.import-tab');
+    const tabProfiles = document.getElementById('tab-profiles');
+    const tabSimpeg = document.getElementById('tab-simpeg');
+    const simpegUploadArea = document.getElementById('simpeg-upload-area');
+    const simpegFileInput = document.getElementById('simpeg-file-input');
+    const simpegControls = document.getElementById('simpeg-controls');
+    const convertSimpegBtn = document.getElementById('convert-simpeg-btn');
+    const simpegResult = document.getElementById('simpeg-result');
+    const simpegStats = document.getElementById('simpeg-stats');
+    const downloadProfilesBtn = document.getElementById('download-profiles-btn');
+    const useConvertedProfilesBtn = document.getElementById('use-converted-profiles-btn');
+
     if (!profilesUploadArea) return; // Not on dashboard page
 
     let profilesData = null;
     let profilesStats = null;
     let profilesFile = null;
+    let simpegProfilesData = null;
+    let simpegProfilesFile = null;
+
+    // ===== Import Tabs Logic =====
+    importTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const targetTab = tab.dataset.tab;
+            
+            // Update tab buttons
+            importTabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            
+            // Update tab content
+            if (tabProfiles && tabSimpeg) {
+                tabProfiles.classList.toggle('active', targetTab === 'profiles');
+                tabSimpeg.classList.toggle('active', targetTab === 'simpeg');
+            }
+        });
+    });
 
     // Toggle generator visibility
     toggleGeneratorBtn?.addEventListener('click', () => {
         const isHidden = generatorContent.classList.toggle('hidden');
         toggleGeneratorBtn.classList.toggle('rotated');
     });
+
+    // ... rest of existing code
 
     // Click to upload
     profilesUploadArea.addEventListener('click', () => profilesFileInput.click());
@@ -311,6 +346,177 @@ export function initCoarseGenerator() {
         }
     });
 
+    // ===== SimPEG Import Logic =====
+    if (simpegUploadArea && simpegFileInput) {
+        // Click to upload
+        simpegUploadArea.addEventListener('click', () => simpegFileInput.click());
+
+        // Drag and drop
+        simpegUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            simpegUploadArea.classList.add('dragover');
+        });
+
+        simpegUploadArea.addEventListener('dragleave', () => {
+            simpegUploadArea.classList.remove('dragover');
+        });
+
+        simpegUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            simpegUploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleSimpegFile(files[0]);
+            }
+        });
+
+        simpegFileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleSimpegFile(e.target.files[0]);
+            }
+        });
+    }
+
+    // Handle SimPEG .npz file upload and convert to Profiles.dat
+    async function handleSimpegFile(file) {
+        if (!file.name.endsWith('.npz')) {
+            alert('Пожалуйста, выберите файл с расширением .npz');
+            return;
+        }
+
+        simpegUploadArea.innerHTML = `
+            <div style="font-size: 2em; margin-bottom: 10px;">⏳</div>
+            <p><strong>Чтение файла...</strong></p>
+            <p style="font-size: 0.85em; color: var(--color-text-tertiary); margin-top: 8px;">
+                ${file.name}
+            </p>
+        `;
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const zip = await JSZip.loadAsync(arrayBuffer);
+
+            // Preload every .npy entry as raw bytes (JSZip is async)
+            const raw = {};
+            const entries = Object.keys(zip.files).filter(n => n.endsWith('.npy'));
+            await Promise.all(entries.map(async (name) => {
+                raw[name] = new Uint8Array(await zip.file(name).async('arraybuffer'));
+            }));
+
+            // Единый вызов конвертера (чистые функции живут в simpegProfilesConverter.js)
+            const { npz, stations, profiles: profilesContent, qc } = convertSimpegToProfiles(raw);
+            const nFreq = npz.nFreq;
+            const nStations = npz.nStations;
+            const periods = npz.periods;
+
+            simpegProfilesData = profilesContent;
+            simpegProfilesFile = new File([profilesContent], 'Profiles.dat', { type: 'text/plain' });
+
+            const rhoVals = qc.map(q => q.rho).filter(v => isFinite(v) && v > 0);
+            const rhoMin = rhoVals.length ? Math.min(...rhoVals) : NaN;
+            const rhoMax = rhoVals.length ? Math.max(...rhoVals) : NaN;
+
+            simpegUploadArea.innerHTML = `
+                <div style="font-size: 2em; margin-bottom: 10px;">✅</div>
+                <p><strong>${file.name}</strong></p>
+                <p style="font-size: 0.85em; color: var(--color-text-tertiary); margin-top: 8px;">
+                    Прочитано: ${nFreq} периодов, ${nStations} станций
+                </p>
+            `;
+
+            simpegStats.innerHTML = `
+                <div class="stat-item">
+                    <div class="stat-label">Периодов</div>
+                    <div class="stat-value">${nFreq}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Станций</div>
+                    <div class="stat-value">${nStations}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Диапазон периодов</div>
+                    <div class="stat-value">${periods[0].toExponential(2)} — ${periods[nFreq - 1].toExponential(2)} с</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">ρa (Zxy, ст.1)</div>
+                    <div class="stat-value">${rhoMin.toFixed(1)} — ${rhoMax.toFixed(1)} Ом·м</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Фаза Zxy (ст.1)</div>
+                    <div class="stat-value">${qc[0].phase.toFixed(1)}° … ${qc[nFreq - 1].phase.toFixed(1)}°</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Компоненты</div>
+                    <div class="stat-value">ZXX, ZXY, ZYX, ZYY${npz.hasTipper ? ' + TX, TY' : ''}</div>
+                </div>
+            `;
+
+            simpegControls.classList.remove('hidden');
+            convertSimpegBtn.disabled = false;
+
+        } catch (error) {
+            console.error('Error parsing SimPEG .npz:', error);
+            simpegUploadArea.innerHTML = `
+                <div style="font-size: 2em; margin-bottom: 10px;">❌</div>
+                <p><strong>Ошибка чтения .npz</strong></p>
+                <p style="font-size: 0.85em; color: var(--color-danger); margin-top: 8px;">
+                    ${error.message}
+                </p>
+            `;
+        }
+    }
+
+    // Convert SimPEG button
+    convertSimpegBtn?.addEventListener('click', () => {
+        if (!simpegProfilesData || !simpegProfilesFile) {
+            alert('Сначала загрузите .npz файл');
+            return;
+        }
+
+        // Show result
+        simpegResult.classList.remove('hidden');
+        simpegResult.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    // Download converted Profiles.dat
+    downloadProfilesBtn?.addEventListener('click', () => {
+        if (!simpegProfilesData) {
+            alert('Нет данных для скачивания');
+            return;
+        }
+        const blob = new Blob([simpegProfilesData], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'Profiles.dat';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    // Use converted Profiles.dat for coarse generation
+    useConvertedProfilesBtn?.addEventListener('click', () => {
+        if (!simpegProfilesFile) {
+            alert('Сначала конвертируйте файл');
+            return;
+        }
+
+        // Switch to Profiles.dat tab
+        const profilesTab = document.querySelector('.import-tab[data-tab="profiles"]');
+        if (profilesTab) {
+            profilesTab.click();
+        }
+
+        // Set the converted file to profiles upload
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(simpegProfilesFile);
+        profilesFileInput.files = dataTransfer.files;
+        
+        // Trigger the file handler
+        handleProfilesFile(simpegProfilesFile);
+    });
+
     // Check if both files are ready
     function checkFilesReady() {
         if (fileInputP.files.length > 0 && fileInputC.files.length > 0) {
@@ -347,6 +553,13 @@ export function resetCoarseGenerator() {
     const fileInputP = document.getElementById('file-input-p');
     const fileInputC = document.getElementById('file-input-c');
 
+    // SimPEG elements
+    const simpegUploadArea = document.getElementById('simpeg-upload-area');
+    const simpegFileInput = document.getElementById('simpeg-file-input');
+    const simpegControls = document.getElementById('simpeg-controls');
+    const simpegResult = document.getElementById('simpeg-result');
+    const simpegStats = document.getElementById('simpeg-stats');
+
     if (profilesUploadArea) {
         profilesUploadArea.innerHTML = `
             <div style="font-size: 3em; margin-bottom: 10px;">📁</div>
@@ -373,6 +586,29 @@ export function resetCoarseGenerator() {
 
     if (submitFilesSection) {
         submitFilesSection.classList.add('hidden');
+    }
+
+    // Reset SimPEG UI
+    if (simpegUploadArea) {
+        simpegUploadArea.innerHTML = `
+            <div style="font-size: 3em; margin-bottom: 10px;">📊</div>
+            <p><strong>Загрузите .npz файл</strong></p>
+            <p style="font-size: 0.9em; color: var(--color-text-tertiary); margin-top: 8px;">
+                Содержит частоты, импедансы Zxy/Zyx и модель проводимости
+            </p>
+        `;
+    }
+    if (simpegControls) {
+        simpegControls.classList.add('hidden');
+    }
+    if (simpegResult) {
+        simpegResult.classList.add('hidden');
+    }
+    if (simpegStats) {
+        simpegStats.innerHTML = '';
+    }
+    if (simpegFileInput) {
+        simpegFileInput.value = '';
     }
 
     // Clear file inputs
