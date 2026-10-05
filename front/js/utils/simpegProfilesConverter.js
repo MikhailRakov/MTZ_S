@@ -168,6 +168,7 @@ export function parseSimpegNpz(raw) {
     const hx = get('mesh_hx.npy');
     const hy = get('mesh_hy.npy');
     const hz = get('mesh_hz.npy');
+    const meshOrigin = get('mesh_origin.npy');
     let model = null;
     if (sigma && hx && hy && hz &&
         sigma.data.length === hx.data.length * hy.data.length * hz.data.length) {
@@ -176,6 +177,7 @@ export function parseSimpegNpz(raw) {
             hx: hx.data,
             hy: hy.data,
             hz: hz.data,
+            origin: meshOrigin ? meshOrigin.data : null,
         };
     }
 
@@ -409,6 +411,70 @@ export function computeSimpegQc(npz, stations, stationIndex = 0) {
         });
     }
     return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Coarse.dat напрямую из сетки SimPEG (.npz)
+// ---------------------------------------------------------------------------
+
+/** Формат +1.00000E+02 (5 знаков, E+XX, ведущий +). */
+function exp5plus(v) {
+    if (!isFinite(v) || v <= 0) v = 1e-30;
+    const s = v.toExponential(5);
+    const m = s.match(/^(\d\.\d{5})e([+-])(\d+)$/);
+    if (!m) return '+1.00000E+02';
+    return `+${m[1]}E${m[2]}${m[3].padStart(2, '0')}`;
+}
+
+/**
+ * Coarse.dat напрямую из сетки .npz (та же mesh, что решалась в SimPEG).
+ * Сохраняет ВСЕ слои, включая воздушные — сетка идентична исходной из .npz.
+ * z — сверху вниз (требование формата Coarse.dat).
+ * Возвращает { content, nX, nY, nZ } или null, если в .npz нет модели.
+ */
+export function buildCoarseFromSimpeg(npz) {
+    if (!npz.model) return null;
+    const { sigma, hx, hy, hz } = npz.model;
+    const nX = hx.length, nY = hy.length, nZ = hz.length;
+
+    // z в Coarse.dat: сверху вниз (поверхность -> дно); в .npz z снизу вверх.
+    // Сохраняем все слои, включая воздушные — сетка должна совпадать с .npz.
+    const zOrder = [];
+    for (let k = nZ - 1; k >= 0; k--) zOrder.push(k);
+    const zCells = zOrder.map(k => hz[k]);
+
+    // Сопротивления: для каждого z-слоя (сверху вниз) ny строк по nx значений,
+    // пустая строка между слоями (как в эталоне Coarse.dat).
+    const blocks = [];
+    for (const k of zOrder) {
+        const rows = [];
+        for (let j = 0; j < nY; j++) {
+            const row = [];
+            for (let i = 0; i < nX; i++) {
+                const s = sigma[i + j * nX + k * nX * nY];
+                row.push(exp5plus(1 / s));
+            }
+            rows.push(row.join(' '));
+        }
+        blocks.push(rows.join('\n'));
+    }
+
+    const ts = new Date().toISOString().split('T')[0];
+    let content = `Coarse model written by SimPEG ${ts}\n`;
+    content += `${nX} ${nY} ${nZ} 0   LINEAR\n`;
+    content += hx.map(v => v.toFixed(2)).join(' ') + '\n';
+    content += hy.map(v => v.toFixed(2)).join(' ') + '\n';
+    content += zCells.map(v => v.toFixed(2)).join(' ') + '\n';
+    content += blocks.join('\n\n') + '\n';
+    // Origin = левый нижний угол модели: ox = mesh_origin[0], oy = mesh_origin[1],
+    // oz = 0 (поверхность z=0; сетка включает все слои из .npz).
+    // Если mesh_origin нет в .npz — вычисляем из сумм ширин ячеек (сетка центрирована).
+    const sumX = hx.reduce((a, b) => a + b, 0);
+    const sumY = hy.reduce((a, b) => a + b, 0);
+    const ox = npz.model.origin ? npz.model.origin[0] : -sumX / 2;
+    const oy = npz.model.origin ? npz.model.origin[1] : -sumY / 2;
+    content += `${ox.toFixed(2)} ${oy.toFixed(2)} 0.00\n`;
+    return { content, nX, nY, nZ };
 }
 
 /** Высокоуровневая функция: сырые .npy байты -> текст Profiles.dat. */

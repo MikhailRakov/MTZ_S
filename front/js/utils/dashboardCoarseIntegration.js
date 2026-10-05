@@ -1,6 +1,6 @@
 // Dashboard Coarse Generator Integration
 import { CoarseGenerator } from './coarseGenerator.js';
-import { convertSimpegToProfiles, buildSimpegModelData } from './simpegProfilesConverter.js';
+import { convertSimpegToProfiles, buildSimpegModelData, buildCoarseFromSimpeg } from './simpegProfilesConverter.js';
 import { showVolumeModal } from './resultViewer.js';
 
 let generatorInstance = null;
@@ -56,6 +56,7 @@ export function initCoarseGenerator() {
     let simpegProfilesData = null;
     let simpegProfilesFile = null;
     let simpegModelData = null;   // объёмная модель проводимости из .npz (ResultViewer format)
+    let simpegNpz = null;         // разобранный .npz целиком (для Coarse.dat из сетки)
 
     // ===== Import Tabs Logic =====
     importTabs.forEach(tab => {
@@ -417,6 +418,8 @@ export function initCoarseGenerator() {
             simpegProfilesFile = new File([profilesContent], 'Profiles.dat', { type: 'text/plain' });
             // Объёмная модель (sigma -> rho) для ResultViewer, если в .npz есть сетка
             simpegModelData = buildSimpegModelData(npz);
+            // Весь разобранный .npz — чтобы Coarse.dat строился ИЗ СЕТКИ модели
+            simpegNpz = npz;
 
             const rhoVals = qc.map(q => q.rho).filter(v => isFinite(v) && v > 0);
             const rhoMin = rhoVals.length ? Math.min(...rhoVals) : NaN;
@@ -534,7 +537,26 @@ export function initCoarseGenerator() {
             return;
         }
 
-        // Switch to Profiles.dat tab
+        // Если в .npz есть сетка — строим Coarse.dat ИЗ НЕЁ (та же модель,
+        // что решалась в SimPEG), а не из эвристики скин-слоя.
+        const coarseFromMesh = simpegNpz ? buildCoarseFromSimpeg(simpegNpz) : null;
+        if (coarseFromMesh) {
+            const coarseFile = new File([coarseFromMesh.content], 'Coarse.dat', { type: 'text/plain' });
+            const dtC = new DataTransfer();
+            dtC.items.add(coarseFile);
+            fileInputC.files = dtC.files;
+            readyCoarseName.textContent = `✓ Coarse.dat (сетка .npz: ${coarseFromMesh.nX}×${coarseFromMesh.nY}×${coarseFromMesh.nZ})`;
+
+            const dtP = new DataTransfer();
+            dtP.items.add(simpegProfilesFile);
+            fileInputP.files = dtP.files;
+            readyProfilesName.textContent = `✓ ${simpegProfilesFile.name}`;
+
+            checkFilesReady();
+            return;
+        }
+
+        // Fallback: нет данных сетки — прежний путь через генератор по станциям
         const profilesTab = document.querySelector('.import-tab[data-tab="profiles"]');
         if (profilesTab) {
             profilesTab.click();
@@ -544,7 +566,7 @@ export function initCoarseGenerator() {
         const dataTransfer = new DataTransfer();
         dataTransfer.items.add(simpegProfilesFile);
         profilesFileInput.files = dataTransfer.files;
-        
+
         // Trigger the file handler
         handleProfilesFile(simpegProfilesFile);
     });
