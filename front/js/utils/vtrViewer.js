@@ -461,24 +461,24 @@ function base64ToBytes(base64) {
     // убираем их все, иначе atob бросает InvalidCharacterError.
     const clean = base64.replace(/\s+/g, '');
 
-    // VTK с внутренним компрессором кладёт несколько base64-фрагментов подряд
-    // и в местах стыка может встречаться "==" (валидный padding конца предыдущего
-    // фрагмента). Браузерный atob такие строки целиком не берёт — бьём по "=="
-    // и декодируем каждый кусок отдельно.
-    const parts = clean.split('==');
+    // Обычный случай: один корректный base64-блоб (format="binary" у DataArray).
+    // atob спокойно переваривает padding "==" в конце строки.
+    try {
+        return decodeBase64Chunk(clean);
+    } catch (e) {
+        // падаем в ветку для сцепленных фрагментов ниже
+    }
+
+    // Сцепленные base64-фрагменты (AppendedData с несколькими блоками):
+    // '=' в base64 — только padding, данных не несёт, поэтому режем по нему
+    // и дописываем каждому куску ровно столько '=', сколько не хватает
+    // до кратности 4 (а не всегда "==", как было раньше).
+    const parts = clean.split('=').filter(Boolean);
     const buffers = [];
     let totalLen = 0;
-    for (let i = 0; i < parts.length; i++) {
-        const isLast = i === parts.length - 1;
-        const part = parts[i];
-        if (!part) continue;
-        // "==" — это padding КОНЦА предыдущего фрагмента, поэтому добавляем
-        // его обратно ко всему, кроме последней части (если только сама
-        // исходная строка не кончается на "==").
-        const endsWithDoublePad = clean.endsWith('==') && isLast;
-        const chunk = (i === 0 || !isLast || endsWithDoublePad) ? (part + '==') : part;
-        if (!chunk) continue;
-        const decoded = decodeBase64Chunk(chunk);
+    for (const part of parts) {
+        const pad = (4 - (part.length % 4)) % 4;
+        const decoded = decodeBase64Chunk(part + '='.repeat(pad));
         buffers.push(decoded);
         totalLen += decoded.length;
     }

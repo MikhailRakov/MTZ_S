@@ -162,6 +162,23 @@ export function parseSimpegNpz(raw) {
         ? periodsArr.data
         : frequencies.data.map((f) => 1 / f);
 
+    // Модель проводимости и сетка (для объёмного просмотра) — опционально:
+    // старые .npz могут не содержать sigma_model/mesh_*
+    const sigma = get('sigma_model.npy');
+    const hx = get('mesh_hx.npy');
+    const hy = get('mesh_hy.npy');
+    const hz = get('mesh_hz.npy');
+    let model = null;
+    if (sigma && hx && hy && hz &&
+        sigma.data.length === hx.data.length * hy.data.length * hz.data.length) {
+        model = {
+            sigma: sigma.data,
+            hx: hx.data,
+            hy: hy.data,
+            hz: hz.data,
+        };
+    }
+
     return {
         frequencies: frequencies.data,
         periods,
@@ -171,6 +188,7 @@ export function parseSimpegNpz(raw) {
         nFreq,
         nStations,
         hasTipper: Boolean(tipper.Tx && tipper.Ty),
+        model,
     };
 }
 
@@ -282,6 +300,26 @@ export function formatProfilesRow(period, code, lat, lon, X, Y, Z, comp, real, i
     );
 }
 
+/** Масса-молекулярная константа mu0 — конвертация SI (V/A) → AP3DMT ([V/m]/[T]). */
+const MU0 = 4e-7 * Math.PI; // 1.2566370614359172e-6
+
+/**
+ * Конвенция знаков SimPEG → AP3DMT (проверено по эталонному Profiles.dat):
+ *   - SimPEG (Simulation3DPrimarySecondary) выдаёт Z с фазой ≈ -134° для
+ *     полупространства; AP3DMT-эталон имеет фазу ≈ -45°.
+ *   - Преобразование: Z_AP3DMT = -conj(Z_SimPEG) / mu0
+ *       re_AP3DMT = -re_SimPEG / mu0,  im_AP3DMT = +im_SimPEG / mu0.
+ *   - Типпер T = Hz/Hx безразмерен (H/H), НЕ делится на mu0;
+ *     преобразование: T_AP3DMT = conj(T_SimPEG).
+ */
+export function simpegToAp3dmtZ(re, im) {
+    return { re: -re / MU0, im: im / MU0 };
+}
+
+export function simpegToAp3dmtT(re, im) {
+    return { re, im: -im };
+}
+
 /** Полный текст Profiles.dat: секция импеданса + секция типпера. */
 export function buildProfilesDat(stations, periods) {
     const nFreq = periods.length;
@@ -311,20 +349,26 @@ export function buildProfilesDat(stations, periods) {
     for (let k = 0; k < nFreq; k++) {
         const period = periods[k];
         for (const st of stations) {
+            // Общая ошибка на станцию-период для всех 4 компонент Z
+            // (как в эталоне: 5% от |Zxy| после конвертации)
+            const zxy = st.Zxy[k];
+            const zxyConv = simpegToAp3dmtZ(zxy.re, zxy.im);
+            const zxyMag = Math.hypot(zxyConv.re, zxyConv.im);
+            const err = Math.max(zxyMag * 0.05, 1e-30);
+
             for (const name of comps) {
                 const v = st[name][k];
-                const mag = Math.hypot(v.re, v.im);
-                // 5% относительная ошибка по модулю, с нижним порогом от нуля
-                const err = Math.max(mag * 0.05, 1e-30);
+                const conv = simpegToAp3dmtZ(v.re, v.im);
                 out += formatProfilesRow(
                     period, st.code, 0, 0, st.x, st.y, st.z,
-                    name.toUpperCase(), v.re, v.im, err,
+                    name.toUpperCase(), conv.re, conv.im, err,
                 ) + '\n';
             }
         }
     }
 
     // --- секция 2: вертикальные компоненты (типпер) ---
+    // Типпер безразмерен — БЕЗ деления на mu0; конвертация conj(T).
     if (stations.some((s) => s.Tx && s.Ty)) {
         out += sectionHeader('Full_Vertical_Components', '[]');
         out += sectionTail(stations.length);
@@ -333,13 +377,15 @@ export function buildProfilesDat(stations, periods) {
             const period = periods[k];
             for (const st of stations) {
                 if (!st.Tx || !st.Ty) continue;
+                const tx = simpegToAp3dmtT(st.Tx[k].re, st.Tx[k].im);
+                const ty = simpegToAp3dmtT(st.Ty[k].re, st.Ty[k].im);
                 out += formatProfilesRow(
                     period, st.code, 0, 0, st.x, st.y, st.z,
-                    'TX', st.Tx[k].re, st.Tx[k].im, 0.03,
+                    'TX', tx.re, tx.im, 0.03,
                 ) + '\n';
                 out += formatProfilesRow(
                     period, st.code, 0, 0, st.x, st.y, st.z,
-                    'TY', st.Ty[k].re, st.Ty[k].im, 0.03,
+                    'TY', ty.re, ty.im, 0.03,
                 ) + '\n';
             }
         }
@@ -372,4 +418,61 @@ export function convertSimpegToProfiles(raw) {
     const profiles = buildProfilesDat(stations, npz.periods);
     const qc = computeSimpegQc(npz, stations);
     return { npz, stations, profiles, qc };
+}
+
+// ---------------------------------------------------------------------------
+// Объёмная модель для ResultViewer (тот же стиль, что у готовых решений)
+// ---------------------------------------------------------------------------
+
+/**
+ * Модель проводимости SimPEG в формате ResultViewer:
+ *   { nX, nY, nZ, xCells, yCells, zCells, rhoValues }
+ * zCells идут сверху вниз (k=0 — поверхность), как ждёт ResultViewer;
+ * дискретизация discretize хранит ячейки снизу вверх, поэтому z-ось
+ * и z-срезы sigma разворачиваются. rho = 1/sigma; ячейки воздуха
+ * (rho > 1e6) помечаются NaN и не рисуются — цветовая шкала охватывает
+ * только подповерхностную модель.
+ */
+export function buildSimpegModelData(npz) {
+    if (!npz.model) return null;
+    const { sigma, hx, hy, hz } = npz.model;
+    const nX = hx.length;
+    const nY = hy.length;
+    const nZ = hz.length;
+
+    // top -> bottom для зрителя (k=0 — поверхность)
+    const zCells = [];
+    for (let k = nZ - 1; k >= 0; k--) zCells.push(hz[k]);
+
+    // sigma в .npz хранится в порядке Fortran (x быстрее всего):
+    // idx = i + j*nX + k*nX*nY, k=0 — НИЖНИЙ слой; зрителю нужен idx
+    // k*nX*nY + j*nX + i с k сверху вниз, т.е. k_viewer -> k = nZ-1-k_viewer
+    const AIR_RHO_CUT = 1e6;
+    let rhoValues = new Array(nX * nY * nZ);
+    for (let kv = 0; kv < nZ; kv++) {
+        const k = nZ - 1 - kv;
+        for (let j = 0; j < nY; j++) {
+            for (let i = 0; i < nX; i++) {
+                const s = sigma[i + j * nX + k * nX * nY];
+                const rho = s > 0 ? 1 / s : NaN;
+                rhoValues[kv * nX * nY + j * nX + i] =
+                    (isFinite(rho) && rho < AIR_RHO_CUT) ? rho : NaN;
+            }
+        }
+    }
+
+    // Отрезаем верхние слои, состоящие целиком из воздуха: воздух в объёме
+    // не рисуется, а его ячейки лишь раздувают границы кадра. Оставляем
+    // первый слой, где есть хоть одна неподземная ячейка (поверхность).
+    let firstSolid = 0;
+    outer:
+    for (let kv = 0; kv < nZ; kv++) {
+        for (let idx = kv * nX * nY; idx < (kv + 1) * nX * nY; idx++) {
+            if (isFinite(rhoValues[idx])) { firstSolid = kv; break outer; }
+        }
+    }
+    let viewZ = zCells.slice(firstSolid);
+    let viewRho = rhoValues.slice(firstSolid * nX * nY);
+
+    return { nX, nY, nZ: nZ - firstSolid, xCells: [...hx], yCells: [...hy], zCells: viewZ, rhoValues: viewRho };
 }

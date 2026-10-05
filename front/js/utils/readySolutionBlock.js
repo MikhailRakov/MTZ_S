@@ -14,6 +14,13 @@ let currentSolutionId = null;
 let currentIdToken = null;
 let zipFileInfo = null;
 let dbPromise = null;
+// Последний отрисованный список (имена) — чтобы не перестраивать DOM без
+// изменений: повторная отрисовка с тем же содержимым вызывала reflow
+// и визуальный «съезд» блока при готовом решении на сервере.
+let lastRenderedSignature = null;
+// Текущий список .vtr файлов из S3 — для повторной отрисовки после
+// обновления кэша (иначе список схлопывался до пустого).
+let lastS3VtrFiles = [];
 
 // === Обёртка над IndexedDB ===
 
@@ -89,6 +96,10 @@ export async function displayReadySolution(files, solutionId, idToken) {
 
     zipFileInfo = (files || []).find(f => f.name.toLowerCase().endsWith('.zip')) || null;
     const s3VtrFiles = (files || []).filter(f => f.name.toLowerCase().endsWith('.vtr'));
+    // Запоминаем список S3 для повторной отрисовки после обновления кэша
+    lastS3VtrFiles = s3VtrFiles;
+    // При смене решения сбрасываем подпись, чтобы список перерисовался
+    if (currentSolutionId !== solutionId) lastRenderedSignature = null;
 
     let cachedNames = [];
     try {
@@ -133,9 +144,17 @@ export async function displayReadySolution(files, solutionId, idToken) {
 function setupHandlers() {
     document.getElementById('download-results-zip-btn')?.addEventListener('click', downloadZip);
     document.getElementById('extract-zip-btn')?.addEventListener('click', extractZip);
+    // Делегирование кликов по кнопкам просмотра: обработчик живёт на контейнере
+    // и переживает идемпотентные перерисовки списка.
+    document.getElementById('vtr-files-list')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-view');
+        if (!btn) return;
+        viewVtr(btn.dataset.vtrName, btn.dataset.vtrKey || null);
+    });
 }
 
-// Список .vtr файлов: из S3 + из кэша браузера (без дублей по имени)
+// Список .vtr файлов: из S3 + из кэша браузера (без дублей по имени).
+// Идемпотентно: если состав файлов не изменился, DOM не перестраивается.
 async function renderVtrList(s3VtrFiles, cachedNamesArg) {
     const list = document.getElementById('vtr-files-list');
     if (!list) return;
@@ -159,12 +178,18 @@ async function renderVtrList(s3VtrFiles, cachedNamesArg) {
         }
     }
 
+    // Подпись текущего состава: имя + наличие ключа + кэш. Если не изменилась —
+    // повторная отрисовка (двойной вызов при загрузке) не трогает DOM.
+    const signature = items.map(it => `${it.name}|${it.key || ''}|${it.cached}`).join('\n');
+    if (signature === lastRenderedSignature) return;
+    lastRenderedSignature = signature;
+
     if (items.length === 0) {
         list.innerHTML = '<p class="text-muted">Файлы .vtr появятся здесь после распаковки архива результатов</p>';
         return;
     }
 
-    list.innerHTML = '';
+    const frag = document.createDocumentFragment();
     items.forEach(item => {
         const sizeStr = item.size != null ? `${(item.size / (1024 * 1024)).toFixed(2)} MB • ` : '';
         const cachedStr = item.cached ? ' • сохранён в браузере' : '';
@@ -179,12 +204,11 @@ async function renderVtrList(s3VtrFiles, cachedNamesArg) {
                 <button class="btn-view" data-vtr-name="${item.name}" data-vtr-key="${item.key || ''}">👁 Просмотр 3D</button>
             </div>
         `;
-        list.appendChild(el);
+        frag.appendChild(el);
     });
 
-    list.querySelectorAll('.btn-view').forEach(btn => {
-        btn.addEventListener('click', () => viewVtr(btn.dataset.vtrName, btn.dataset.vtrKey || null));
-    });
+    list.innerHTML = '';
+    list.appendChild(frag);
 }
 
 // Просмотр .vtr: сначала пробуем взять из кэша браузера, иначе — из S3
@@ -206,7 +230,9 @@ async function viewVtr(name, key) {
             text = await response.text();
             try {
                 await cacheVtr(currentSolutionId, name, text);
-                renderVtrList([]);
+                // Обновляем признак «сохранён в браузере» без перестроения
+                // списка заново: передаём текущие S3-файлы, кэш перечитаем.
+                renderVtrList(lastS3VtrFiles);
             } catch (err) {
                 console.warn(`[READY SOLUTION] Не удалось сохранить ${name} в кэш:`, err);
             }
@@ -301,7 +327,8 @@ async function extractZip() {
         } else {
             setStatus(`✓ Распаковано файлов: ${entries.length}${failed > 0 ? ` (в кэш сохранено ${saved})` : ''}. Они сохранены в хранилище браузера.`);
         }
-        renderVtrList([]);
+        // Перечитываем кэш и перерисовываем список (S3-файлы сохраняем)
+        renderVtrList(lastS3VtrFiles);
     } catch (error) {
         console.error('[READY SOLUTION] Ошибка распаковки архива:', error);
         setStatus(`Ошибка распаковки: ${error.message}`, true);

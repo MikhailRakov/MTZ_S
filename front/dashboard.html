@@ -129,6 +129,7 @@
                             <div class="viz-header">
                                 <h4 style="margin: 0; color: var(--color-primary);">🎯 3D Визуализация сетки</h4>
                                 <div class="viz-controls">
+                                    <button type="button" id="volume-coarse-btn" class="btn btn-sm">📊 Объёмный просмотр (volume)</button>
                                     <button type="button" id="download-coarse-btn" class="btn btn-success btn-sm">💾 Скачать Coarse.dat</button>
                                     <button type="button" id="use-generated-coarse-btn" class="btn btn-sm">✓ Использовать эту сетку</button>
                                 </div>
@@ -213,6 +214,7 @@
                             <div class="viz-header">
                                 <h4 style="margin: 0; color: var(--color-primary);">✅ Конвертация завершена</h4>
                                 <div class="viz-controls">
+                                    <button type="button" id="simpeg-volume-btn" class="btn btn-sm">📊 Объёмная модель (volume)</button>
                                     <button type="button" id="download-profiles-btn" class="btn btn-success btn-sm">💾 Скачать Profiles.dat</button>
                                     <button type="button" id="use-converted-profiles-btn" class="btn btn-sm">✓ Использовать для генерации Coarse</button>
                                 </div>
@@ -258,17 +260,15 @@
                 </div>
 
                 <div id="upload-message" class="upload-message hidden"></div>
-            </div>
-
             <!-- Results Section -->
-            <div id="solution-files-container" class="files-section hidden">
+                <div id="solution-files-container" class="files-section hidden">
                 <h3>Результаты расчёта</h3>
                 <div id="files-list" class="files-grid">
                     <p class="text-muted">Файлы результатов появятся здесь после завершения расчёта</p>
                 </div>
             </div>
 
-            <!-- Ready Solution Section (zip с .vtr результатами) -->
+             <!-- Ready Solution Section (zip с .vtr результатами) -->
             <div id="ready-solution-container" class="files-section hidden">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 8px;">
                     <h3 style="margin: 0;">📦 Готовое решение</h3>
@@ -284,6 +284,14 @@
                 <div id="vtr-files-list" class="files-grid"></div>
                 <div id="vtr-loading-status" class="hidden" style="margin-top: 12px; font-size: var(--text-sm);"></div>
             </div>
+            
+            </div>
+             
+            
+
+           
+
+           
         </div>
     </div>
 

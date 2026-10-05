@@ -367,6 +367,7 @@ export class ResultViewer {
 
     // Меняет cutoff-диапазон и пересчитывает матрицы (скрытые ячейки = scale 0).
     setRange(minRho, maxRho) {
+        if (!this.colorScale) return; // сцена ещё не инициализирована
         if (!(minRho > 0) || !(maxRho > 0) || minRho >= maxRho) return;
         this.settings.minRho = minRho;
         this.settings.maxRho = maxRho;
@@ -390,6 +391,7 @@ export class ResultViewer {
     setColormap(name) {
         if (!colormaps[name]) return;
         this.settings.colormap = name;
+        if (!this.colorScale) return; // сцена ещё не инициализирована
         this.colorScale.paletteName = name;
         this._rebuildAllInstances();
         this._updateColorScaleLegend();
@@ -582,4 +584,94 @@ function formatRho(v) {
     if (v < 1000) return v.toFixed(0);
     if (v < 10000) return v.toFixed(0);
     return v.toExponential(1);
+}
+
+// === Модальное окно объёмного просмотра модели ===
+// Переиспользует стиль готовых решений (файл-viewer-modal + ResultViewer):
+// тот же модальный шаблон, легенда, статистика и OrbitControls.
+// modelData — объект формата { nX, nY, nZ, xCells, yCells, zCells, rhoValues }
+// (см. buildSimpegModelData в simpegProfilesConverter.js).
+let _volumeViewerInstance = null;
+
+export function showVolumeModal(modelData, title = 'Объёмная модель') {
+    const modal = document.createElement('div');
+    modal.className = 'file-viewer-modal result-viewer-modal-large';
+    modal.innerHTML = `
+        <div class="file-viewer-content result-viewer-content-large">
+            <div class="file-viewer-header">
+                <h3>📊 ${title}</h3>
+                <button class="file-viewer-close">&times;</button>
+            </div>
+            <div class="file-viewer-body">
+                <div class="volume-3d-container" style="width: 100%; height: 70vh; position: relative;"></div>
+                <div class="volume-stats" style="margin-top: 16px; padding: 12px; background: var(--color-bg-secondary); border-radius: var(--radius-md);"></div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    const container = modal.querySelector('.volume-3d-container');
+    const statsDiv = modal.querySelector('.volume-stats');
+
+    try {
+        if (_volumeViewerInstance) {
+            _volumeViewerInstance.dispose();
+            _volumeViewerInstance = null;
+        }
+
+        _volumeViewerInstance = new ResultViewer();
+        _volumeViewerInstance.init3DVisualization(container, modelData);
+
+        const totalCells = modelData.nX * modelData.nY * modelData.nZ;
+        const xExtent = modelData.xCells.reduce((a, b) => a + b, 0);
+        const yExtent = modelData.yCells.reduce((a, b) => a + b, 0);
+        const zExtent = modelData.zCells.reduce((a, b) => a + b, 0);
+        const validRho = modelData.rhoValues.filter(v => isFinite(v) && v > 0);
+        const minRho = validRho.length ? Math.min(...validRho) : NaN;
+        const maxRho = validRho.length ? Math.max(...validRho) : NaN;
+
+        statsDiv.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 0.9em;">
+                <div>
+                    <div style="color: var(--color-text-tertiary);">Размер модели</div>
+                    <div style="color: var(--color-primary); font-weight: 600;">${modelData.nX} × ${modelData.nY} × ${modelData.nZ}</div>
+                </div>
+                <div>
+                    <div style="color: var(--color-text-tertiary);">Всего ячеек</div>
+                    <div style="color: var(--color-primary); font-weight: 600;">${totalCells.toLocaleString()}</div>
+                </div>
+                <div>
+                    <div style="color: var(--color-text-tertiary);">Область (X × Y)</div>
+                    <div style="color: var(--color-primary); font-weight: 600;">${(xExtent / 1000).toFixed(1)} × ${(yExtent / 1000).toFixed(1)} км</div>
+                </div>
+                <div>
+                    <div style="color: var(--color-text-tertiary);">Глубина</div>
+                    <div style="color: var(--color-primary); font-weight: 600;">${(zExtent / 1000).toFixed(1)} км</div>
+                </div>
+                <div>
+                    <div style="color: var(--color-text-tertiary);">Диапазон ρ</div>
+                    <div style="color: var(--color-primary); font-weight: 600;">${isFinite(minRho) ? minRho.toFixed(1) : '—'} — ${isFinite(maxRho) ? maxRho.toFixed(1) : '—'} Ω·м</div>
+                </div>
+            </div>
+            <div style="margin-top: 12px; color: var(--color-text-tertiary); font-size: 0.85em;">
+                💡 Используйте мышь для вращения, масштабирования и панорамирования модели
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error rendering volume modal:', error);
+        statsDiv.innerHTML = `<p style="color: var(--color-danger);">Ошибка отображения: ${error.message}</p>`;
+    }
+
+    const close = () => {
+        if (_volumeViewerInstance) {
+            _volumeViewerInstance.dispose();
+            _volumeViewerInstance = null;
+        }
+        if (modal.parentNode) modal.parentNode.removeChild(modal);
+    };
+
+    modal.querySelector('.file-viewer-close').addEventListener('click', close);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) close();
+    });
 }

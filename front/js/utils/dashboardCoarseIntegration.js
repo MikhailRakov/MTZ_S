@@ -1,6 +1,7 @@
 // Dashboard Coarse Generator Integration
 import { CoarseGenerator } from './coarseGenerator.js';
-import { convertSimpegToProfiles } from './simpegProfilesConverter.js';
+import { convertSimpegToProfiles, buildSimpegModelData } from './simpegProfilesConverter.js';
+import { showVolumeModal } from './resultViewer.js';
 
 let generatorInstance = null;
 
@@ -44,6 +45,8 @@ export function initCoarseGenerator() {
     const simpegStats = document.getElementById('simpeg-stats');
     const downloadProfilesBtn = document.getElementById('download-profiles-btn');
     const useConvertedProfilesBtn = document.getElementById('use-converted-profiles-btn');
+    const volumeCoarseBtn = document.getElementById('volume-coarse-btn');
+    const simpegVolumeBtn = document.getElementById('simpeg-volume-btn');
 
     if (!profilesUploadArea) return; // Not on dashboard page
 
@@ -52,6 +55,7 @@ export function initCoarseGenerator() {
     let profilesFile = null;
     let simpegProfilesData = null;
     let simpegProfilesFile = null;
+    let simpegModelData = null;   // объёмная модель проводимости из .npz (ResultViewer format)
 
     // ===== Import Tabs Logic =====
     importTabs.forEach(tab => {
@@ -411,6 +415,8 @@ export function initCoarseGenerator() {
 
             simpegProfilesData = profilesContent;
             simpegProfilesFile = new File([profilesContent], 'Profiles.dat', { type: 'text/plain' });
+            // Объёмная модель (sigma -> rho) для ResultViewer, если в .npz есть сетка
+            simpegModelData = buildSimpegModelData(npz);
 
             const rhoVals = qc.map(q => q.rho).filter(v => isFinite(v) && v > 0);
             const rhoMin = rhoVals.length ? Math.min(...rhoVals) : NaN;
@@ -493,6 +499,32 @@ export function initCoarseGenerator() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    });
+
+    // Объёмная модель SimPEG (.npz) — тот же стиль, что у готовых решений
+    simpegVolumeBtn?.addEventListener('click', () => {
+        if (!simpegModelData) {
+            alert('В загруженном .npz нет данных модели (sigma_model / mesh_*). Объёмный просмотр недоступен.');
+            return;
+        }
+        showVolumeModal(simpegModelData, 'Модель проводимости SimPEG (объём)');
+    });
+
+    // Объёмный просмотр сгенерированной Coarse-сетки: ячейки с единым
+    // стартовым сопротивлением (defaultRho), в стиле ResultViewer
+    volumeCoarseBtn?.addEventListener('click', () => {
+        const coarse = generator.generatedCoarse;
+        if (!coarse) {
+            alert('Сначала сгенерируйте сетку');
+            return;
+        }
+        const { config, xCells, yCells, zCells } = coarse;
+        const total = config.nX * config.nY * config.nZ;
+        const rhoValues = new Array(total).fill(config.defaultRho || 100);
+        showVolumeModal(
+            { nX: config.nX, nY: config.nY, nZ: config.nZ, xCells, yCells, zCells, rhoValues },
+            `Coarse-сетка ${config.nX}×${config.nY}×${config.nZ} (ρ = ${config.defaultRho} Ω·м)`
+        );
     });
 
     // Use converted Profiles.dat for coarse generation

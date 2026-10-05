@@ -571,6 +571,7 @@ a:hover {
 
 /* === Right Main Area === */
 .block-right {
+    align-items: center;
     flex: 1;
     background-color: var(--color-bg-secondary);
     overflow-y: auto;
