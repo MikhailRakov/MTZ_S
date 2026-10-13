@@ -36,14 +36,22 @@ jobs:
           mkdir -p ~/mtz-server/logs
           chmod 777 ~/mtz-server/logs
 
-      - name: Decode secrets
+            - name: Decode secrets
         run: |
           set -e
-          rm -f ~/mtz-server/serviceAccountKey.json ~/mtz-server/config.yml
+          echo "🔑 Decoding serviceAccountKey.json..."
+          rm -rf ~/mtz-server/serviceAccountKey.json
           echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server/serviceAccountKey.json
           chmod 600 ~/mtz-server/serviceAccountKey.json
+          
+          echo "📝 Decoding config.yml..."
+          rm -rf ~/mtz-server/config.yml
           echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/config.yml
           chmod 600 ~/mtz-server/config.yml
+          
+          echo "✅ Verifying files..."
+          file ~/mtz-server/serviceAccountKey.json
+          file ~/mtz-server/config.yml
 
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
