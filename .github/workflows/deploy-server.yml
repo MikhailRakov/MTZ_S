@@ -36,7 +36,7 @@ jobs:
           mkdir -p ~/mtz-server/logs
           chmod 777 ~/mtz-server/logs
 
-            - name: Decode secrets
+      - name: Decode secrets
         run: |
           echo "🔧 Preparing secrets directory..."
           mkdir -p ~/mtz-server/secrets
