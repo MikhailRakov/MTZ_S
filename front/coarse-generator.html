@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coarse.dat Generator - MTZ_S</title>
+    <link rel="icon" type="image/gif" href="a_ficon.gif">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.95em;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            background: #f8f9ff;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-bottom: 30px;
+        }
+
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+        }
+
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background: #e8ebff;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 4em;
+            margin-bottom: 15px;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .config-section {
+            background: #f8f9ff;
+            padding: 25px;
+            border-radius: 15px;
+            margin-bottom: 25px;
+        }
+
+        .config-section h3 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.2em;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .input-group label {
+            font-size: 0.9em;
+            color: #555;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .input-group input {
+            padding: 10px 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 35px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .button:active {
+            transform: translateY(0);
+        }
+
+        .button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status {
+            margin-top: 25px;
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 0.95em;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            color: #155724;
+            display: block;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            border: 2px solid #dc3545;
+            color: #721c24;
+            display: block;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            border: 2px solid #17a2b8;
+            color: #0c5460;
+            display: block;
+        }
+
+        .file-info {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 0.9em;
+        }
+
+        .file-info strong {
+            color: #667eea;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Coarse.dat Generator</h1>
+        <p class="subtitle">Upload Profiles.dat and automatically generate Coarse.dat file</p>
+
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <h3>Drop Profiles.dat here or click to browse</h3>
+            <p style="color: #999; margin-top: 10px;">Supported format: Profiles.dat (MT data file)</p>
+            <input type="file" id="fileInput" accept=".dat">
+        </div>
+
+        <div class="config-section">
+            <h3>⚙️ Grid Configuration</h3>
+            <div class="config-grid">
+                <div class="input-group">
+                    <label for="nX">X Grid Cells (nX)</label>
+                    <input type="number" id="nX" value="44" min="1">
+                </div>
+                <div class="input-group">
+                    <label for="nY">Y Grid Cells (nY)</label>
+                    <input type="number" id="nY" value="42" min="1">
+                </div>
+                <div class="input-group">
+                    <label for="nZ">Z Grid Cells (nZ)</label>
+                    <input type="number" id="nZ" value="59" min="1">
+                </div>
+            </div>
+
+            <div class="config-grid" style="margin-top: 20px;">
+                <div class="input-group">
+                    <label for="padding">Padding Factor</label>
+                    <input type="number" id="padding" value="1.2" min="1" step="0.1">
+                </div>
+                <div class="input-group">
+                    <label for="growthFactor">Growth Factor</label>
+                    <input type="number" id="growthFactor" value="1.15" min="1" step="0.05">
+                </div>
+                <div class="input-group">
+                    <label for="zGrowthFactor">Z Growth Factor</label>
+                    <input type="number" id="zGrowthFactor" value="1.15" min="1" step="0.05">
+                </div>
+            </div>
+
+            <div class="config-grid" style="margin-top: 20px;">
+                <div class="input-group">
+                    <label for="minCellSize">Min Cell Size (m)</label>
+                    <input type="number" id="minCellSize" value="30000" min="1000">
+                </div>
+                <div class="input-group">
+                    <label for="zFirstLayer">First Z Layer (m)</label>
+                    <input type="number" id="zFirstLayer" value="500" min="1">
+                </div>
+                <div class="input-group">
+                    <label for="defaultRho">Default ρ (Ω·m)</label>
+                    <input type="number" id="defaultRho" value="100" min="0.1">
+                </div>
+            </div>
+        </div>
+
+        <button class="button" id="generateBtn" disabled>Generate Coarse.dat</button>
+
+        <div class="progress-bar" id="progressBar">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <script>
+        let profilesData = null;
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const status = document.getElementById('status');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+
+        // Click to upload
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            showStatus('info', `Reading file: ${file.name}...`);
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    profilesData = e.target.result;
+                    const stats = analyzeProfilesData(profilesData);
+
+                    uploadArea.innerHTML = `
+                        <div class="upload-icon">✅</div>
+                        <h3>${file.name}</h3>
+                        <div class="file-info">
+                            <strong>Stations:</strong> ${stats.numStations}<br>
+                            <strong>Periods:</strong> ${stats.numPeriods}<br>
+                            <strong>X Range:</strong> ${stats.xRange.toFixed(2)} m<br>
+                            <strong>Y Range:</strong> ${stats.yRange.toFixed(2)} m
+                        </div>
+                    `;
+
+                    generateBtn.disabled = false;
+                    showStatus('success', `File loaded successfully! ${stats.numStations} stations, ${stats.numPeriods} periods.`);
+                } catch (error) {
+                    showStatus('error', `Error reading file: ${error.message}`);
+                    generateBtn.disabled = true;
+                }
+            };
+
+            reader.onerror = () => {
+                showStatus('error', 'Failed to read file.');
+                generateBtn.disabled = true;
+            };
+
+            reader.readAsText(file);
+        }
+
+        function analyzeProfilesData(data) {
+            const lines = data.split('\n');
+            const stations = new Set();
+            const periods = new Set();
+            const xCoords = [];
+            const yCoords = [];
+
+            for (const line of lines) {
+                if (line.trim().startsWith('#') || line.trim().startsWith('>') || !line.trim()) continue;
+
+                const parts = line.trim().split(/\s+/);
+                if (parts.length >= 7) {
+                    const period = parseFloat(parts[0]);
+                    const code = parts[1];
+                    const x = parseFloat(parts[4]);
+                    const y = parseFloat(parts[5]);
+
+                    if (!isNaN(period) && !isNaN(x) && !isNaN(y)) {
+                        periods.add(period);
+                        stations.add(code);
+                        xCoords.push(x);
+                        yCoords.push(y);
+                    }
+                }
+            }
+
+            return {
+                numStations: stations.size,
+                numPeriods: periods.size,
+                xRange: Math.max(...xCoords) - Math.min(...xCoords),
+                yRange: Math.max(...yCoords) - Math.min(...yCoords),
+                xMin: Math.min(...xCoords),
+                xMax: Math.max(...xCoords),
+                yMin: Math.min(...yCoords),
+                yMax: Math.max(...yCoords)
+            };
+        }
+
+        generateBtn.addEventListener('click', generateCoarseFile);
+
+        function generateCoarseFile() {
+            try {
+                showStatus('info', 'Generating Coarse.dat...');
+                progressBar.style.display = 'block';
+                setProgress(10);
+
+                // Get configuration
+                const config = {
+                    nX: parseInt(document.getElementById('nX').value),
+                    nY: parseInt(document.getElementById('nY').value),
+                    nZ: parseInt(document.getElementById('nZ').value),
+                    padding: parseFloat(document.getElementById('padding').value),
+                    growthFactor: parseFloat(document.getElementById('growthFactor').value),
+                    zGrowthFactor: parseFloat(document.getElementById('zGrowthFactor').value),
+                    minCellSize: parseFloat(document.getElementById('minCellSize').value),
+                    zFirstLayer: parseFloat(document.getElementById('zFirstLayer').value),
+                    defaultRho: parseFloat(document.getElementById('defaultRho').value)
+                };
+
+                setProgress(30);
+
+                // Analyze profiles data
+                const stats = analyzeProfilesData(profilesData);
+
+                setProgress(50);
+
+                // Generate grid
+                const xCells = generateXYCells(stats.xMin, stats.xMax, config.nX, config.padding, config.growthFactor, config.minCellSize);
+                const yCells = generateXYCells(stats.yMin, stats.yMax, config.nY, config.padding, config.growthFactor, config.minCellSize);
+                const zCells = generateZCells(config.nZ, config.zFirstLayer, config.zGrowthFactor);
+
+                setProgress(70);
+
+                // Build Coarse.dat content
+                const content = buildCoarseContent(config, xCells, yCells, zCells);
+
+                setProgress(90);
+
+                // Download file
+                downloadFile('Coarse.dat', content);
+
+                setProgress(100);
+                showStatus('success', `✅ Coarse.dat generated successfully! Grid: ${config.nX}×${config.nY}×${config.nZ}`);
+
+                setTimeout(() => {
+                    progressBar.style.display = 'none';
+                    setProgress(0);
+                }, 2000);
+
+            } catch (error) {
+                showStatus('error', `Generation failed: ${error.message}`);
+                progressBar.style.display = 'none';
+                console.error(error);
+            }
+        }
+
+        function generateXYCells(min, max, nCells, padding, growthFactor, minCellSize) {
+            const range = max - min;
+            const center = (max + min) / 2;
+            const paddedRange = range * padding;
+
+            const cells = [];
+            const nHalf = Math.floor(nCells / 2);
+
+            // Core cells (constant size)
+            const coreSize = Math.max(range / (nHalf * 1.5), minCellSize);
+
+            // Left/bottom padding cells (growing)
+            for (let i = 0; i < nHalf; i++) {
+                const size = coreSize * Math.pow(growthFactor, nHalf - i);
+                cells.push(size);
+            }
+
+            // Right/top padding cells (growing)
+            for (let i = 0; i < nCells - nHalf; i++) {
+                const size = coreSize * Math.pow(growthFactor, i);
+                cells.push(size);
+            }
+
+            return cells;
+        }
+
+        function generateZCells(nZ, firstLayer, growthFactor) {
+            const cells = [];
+            let currentSize = firstLayer;
+
+            for (let i = 0; i < nZ; i++) {
+                cells.push(currentSize);
+                currentSize *= growthFactor;
+            }
+
+            return cells;
+        }
+
+        function buildCoarseContent(config, xCells, yCells, zCells) {
+            const timestamp = new Date().toISOString().split('T')[0];
+            let content = `Coarse model written by User ${timestamp}\n`;
+            content += `${config.nX} ${config.nY} ${config.nZ} 0   LINEAR\n`;
+
+            // X cells
+            content += xCells.map(v => v.toFixed(2)).join(' ') + '\n';
+
+            // Y cells
+            content += yCells.map(v => v.toFixed(2)).join(' ') + '\n';
+
+            // Z cells
+            content += zCells.map(v => v.toFixed(2)).join(' ') + '\n';
+
+            // Resistivity values (default rho for all cells)
+            const rhoFormatted = config.defaultRho.toExponential(5).toUpperCase().replace('E', 'E+');
+
+            for (let z = 0; z < config.nZ; z++) {
+                const row = Array(config.nX).fill(rhoFormatted).join(' ');
+                content += row + '\n';
+            }
+
+            return content;
+        }
+
+        function downloadFile(filename, content) {
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function showStatus(type, message) {
+            status.className = `status ${type}`;
+            status.textContent = message;
+        }
+
+        function setProgress(percent) {
+            progressFill.style.width = percent + '%';
+        }
+    </script>
+</body>
+</html>

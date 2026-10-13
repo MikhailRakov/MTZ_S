@@ -3,15 +3,8 @@ name: Deploy Dev to Server
 on:
   workflow_dispatch:
   push:
-    branches: [dev]
-    paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'pkg/**'
-      - 'front/**'
-      - 'Dockerfile'
-      - 'go.mod'
-      - 'go.sum'
+    branches: [Dev]
+    
 
 env:
   REGISTRY: ghcr.io
@@ -58,15 +51,15 @@ jobs:
           echo "🔧 Deploying DEV version..."
 
           echo "🔐 Создание директорий..."
-          mkdir -p /opt/mtz-server-dev/logs
+          mkdir -p ~/mtz-server-dev/logs
 
           echo "🔑 Декодирование serviceAccountKey.json..."
-          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > /opt/mtz-server-dev/serviceAccountKey.json
-          chmod 600 /opt/mtz-server-dev/serviceAccountKey.json
+          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server-dev/serviceAccountKey.json
+          chmod 600 ~/mtz-server-dev/serviceAccountKey.json
 
           echo "📝 Декодирование config.yml..."
-          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > /opt/mtz-server-dev/config.yml
-          chmod 644 /opt/mtz-server-dev/config.yml
+          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server-dev/config.yml
+          chmod 644 ~/mtz-server-dev/config.yml
 
           echo "🔑 Логин в GHCR..."
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -86,10 +79,10 @@ jobs:
             -e AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }} \
             -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
             -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-            -p 8081:8081 \
-            -v /opt/mtz-server-dev/serviceAccountKey.json:/app/serviceAccountKey.json:ro \
-            -v /opt/mtz-server-dev/config.yml:/app/config.yml:ro \
-            -v /opt/mtz-server-dev/logs:/app/logs \
+            -p 8081:8080 \
+            -v ~/mtz-server-dev/serviceAccountKey.json:/app/serviceAccountKey.json:ro \
+            -v ~/mtz-server-dev/config.yml:/app/config.yml:ro \
+            -v ~/mtz-server-dev/logs:/app/logs \
             --restart unless-stopped \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><title>SimPEG .npz → Profiles.dat (JS)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+body{font-family:sans-serif;max-width:720px;margin:40px auto;padding:0 20px;background:#f0f4f8}
+h1{font-size:1.3rem;color:#1a3a5c}
+.box{background:#fff;padding:24px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);margin-top:16px}
+input[type="file"]{margin:10px 0;padding:8px}
+button{padding:10px 22px;background:#1a3a5c;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:1rem}
+button:hover{background:#24608c}
+pre{background:#f0f2f5;padding:14px;border-radius:8px;overflow:auto;font-size:.82rem;max-height:260px}
+#out{margin-top:12px}
+</style>
+</head>
+<body>
+<h1>SimPEG .npz → Profiles.dat <small>(вся конвертация в браузере)</small></h1>
+<div class="box">
+<p>Выберите <code>mtz_simpeg_results.npz</code> — JS распарсит массивы и построит <code>Profiles.dat</code>.</p>
+<input type="file" id="fs" accept=".npz">
+<button onclick="go()">Конвертировать в Profiles.dat</button>
+<div id="out"></div>
+</div>
+
+<script>
+/* Минимальный парсер .npy (float64) — только для этого формата */
+function parseNpy(buf) {
+  const MAGIC = new TextEncoder().encode('NUMPY');
+  if (buf[0] !== 0x93 || new TextDecoder().decode(buf.subarray(1,6)) !== 'NUMPY') {
+    throw new Error('.npy: bad magic');
+  }
+  const ver = buf[6]; // 1 или 2
+  let len = ver === 1 ? buf[8]|(buf[9]<<8) : (buf[8]|(buf[9]<<8)|(buf[10]<<16)|(buf[11]<<24));
+  if (ver === 1) len = buf.readUInt16LE ? buf.readUInt16LE(8) : buf[8] + buf[9]*256;
+  // В JS ArrayBuffer нет readUInt16LE, делаем руками
+  len = buf[8] + (buf[9]<<8);
+  const headerStr = new TextDecoder().decode(buf.subarray(10, 10+len));
+  const d = headerStr.match(/'descr':\s*'([^']+)'/)[1];
+  const sh = headerStr.match(/'shape':\s*\(([^)]*)\)/)[1].split(',').filter(s=>s.trim()).map(Number);
+  const itemSize = d === '<f8' ? 8 : d === '<i8' ? 8 : d === '<f4' ? 4 : 8;
+  const offset = 10 + len;
+  // выравнивание до 64? .npy v1: header padded with spaces to multiple of 64? Нет, просто до 64-байтной границы от начала файла
+  // На практике offset уже правильный из-за пробелов в header
+  const total = sh.reduce((a,b)=>a*b,1) * itemSize;
+  const dataBuf = buf.subarray(offset, offset+total);
+  const floats = new Float64Array(dataBuf.buffer, dataBuf.byteOffset, dataBuf.byteLength/8);
+  return {shape: sh, data: floats};
+}
+
+async function go() {
+  const f = document.getElementById('fs').files[0];
+  if (!f) { document.getElementById('out').innerHTML='<b>Выберите файл</b>'; return; }
+  const out = document.getElementById('out');
+  out.innerHTML = '<b>Читаем .npz …</b>';
+
+  const zip = await JSZip.loadAsync(f);
+
+  // Читаем ключевые массивы
+  const freqObj = await zip.file('frequencies.npy').async('arraybuffer');
+  const zxy_r_obj = await zip.file('Zxy_real.npy').async('arraybuffer');
+  const zxy_i_obj = await zip.file('Zxy_imag.npy').async('arraybuffer');
+  const zyx_r_obj = await zip.file('Zyx_real.npy').async('arraybuffer');
+  const zyx_i_obj = await zip.file('Zyx_imag.npy').async('arraybuffer');
+
+  const freq = parseNpy(new Uint8Array(freqObj));
+  const zxy_r = parseNpy(new Uint8Array(zxy_r_obj));
+  const zxy_i = parseNpy(new Uint8Array(zxy_i_obj));
+  const zyx_r = parseNpy(new Uint8Array(zyx_r_obj));
+  const zyx_i = parseNpy(new Uint8Array(zyx_i_obj));
+
+  // Формируем Profiles.dat (Matlab-style текст)
+  let txt = '# Synthetic 3D MT data written in JS from SimPEG .npz\n';
+  txt += '# Period(s) Code GG_Lon X(m) Y(m) Z(m) Component Real Imag Error\n';
+  txt += '>  Full_Impedance\n';
+  txt += '>  exp(-i\\omega t)\n';
+  txt += '>  [V/m]/[T]\n';
+  txt += '>  [V/A]\n';
+  txt += '>  0.000\n';
+
+  const n = freq.data.length;
+  for (let i=0;i<n;i++) {
+    const T = 1/freq.data[i]; // period
+    txt += `> ${T.toFixed(6)}  Zxy  0.0  0.0  0.0  Real  ${zxy_r.data[i].toExponential(6)}  ${zxy_i.data[i].toExponential(6)}  0.0\n`;
+    txt += `> ${T.toFixed(6)}  Zxy  0.0  0.0  0.0  Imag  ${zxy_r.data[i].toExponential(6)}  ${zxy_i.data[i].toExponential(6)}  0.0\n`;
+    txt += `> ${T.toFixed(6)}  Zyx  0.0  0.0  0.0  Real  ${zyx_r.data[i].toExponential(6)}  ${zyx_i.data[i].toExponential(6)}  0.0\n`;
+    txt += `> ${T.toFixed(6)}  Zyx  0.0  0.0  0.0  Imag  ${zyx_r.data[i].toExponential(6)}  ${zyx_i.data[i].toExponential(6)}  0.0\n`;
+  }
+
+  // Скачивание
+  const blob = new Blob([txt], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'Profiles.dat';
+  a.textContent = 'Скачать Profiles.dat';
+  out.innerHTML = '<b>Конвертация завершена.</b> ' + txt.split('\n').length + ' строк. ';
+  out.appendChild(a);
+  out.appendChild(document.createElement('br'));
+
+  const pre = document.createElement('pre');
+  pre.textContent = txt.split('\n').slice(0,8).join('\n') + '\n...';
+  out.appendChild(pre);
+}
+</script>
+</body>
+</html>

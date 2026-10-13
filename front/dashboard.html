@@ -12,6 +12,14 @@
     <script src="https://www.gstatic.com/firebasejs/10.10.0/firebase-auth-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
 </head>
 
 <body>
@@ -61,9 +69,164 @@
             <div id="file-upload-section" class="file-upload-section hidden">
                 <h3>Загрузить входные данные</h3>
                 <p style="color: var(--color-text-secondary); margin-bottom: 16px;">
-                    Загрузите два файла с данными для начала расчёта обратной задачи
+                    Загрузите файл профилей и сгенерируйте coarse сетку или загрузите готовую
                 </p>
-                <form id="file-upload-form">
+
+                <!-- Import Type Tabs -->
+                <div class="import-tabs">
+                    <button class="import-tab active" data-tab="profiles">📁 Profiles.dat</button>
+                    <button class="import-tab" data-tab="simpeg">🔬 SimPEG (.npz)</button>
+                </div>
+
+                <!-- Profiles.dat Import Tab Content -->
+                <div id="tab-profiles" class="import-tab-content active">
+                    <!-- Coarse Generator Section -->
+                    <div class="coarse-generator-section">
+                    <div class="generator-header">
+                        <h4 style="color: var(--color-primary); margin: 0;">📊 Генератор Coarse сетки</h4>
+                        <button type="button" id="toggle-generator-btn" class="btn-icon">▼</button>
+                    </div>
+
+                    <div id="generator-content" class="generator-content">
+                        <div class="generator-upload-area" id="profiles-upload-area">
+                            <div style="font-size: 3em; margin-bottom: 10px;">📁</div>
+                            <p><strong>Загрузите Profiles.dat</strong></p>
+                            <p style="font-size: 0.9em; color: var(--color-text-tertiary); margin-top: 8px;">
+                                Для автоматической генерации coarse сетки
+                            </p>
+                            <input type="file" id="profiles-file-input" accept=".dat" style="display: none;">
+                        </div>
+
+                        <div id="generator-controls" class="generator-controls hidden">
+                            <div class="controls-grid">
+                                <div class="control-group">
+                                    <label>X ячейки</label>
+                                    <input type="number" id="grid-nx" value="44" min="10" max="100">
+                                </div>
+                                <div class="control-group">
+                                    <label>Y ячейки</label>
+                                    <input type="number" id="grid-ny" value="42" min="10" max="100">
+                                </div>
+                                <div class="control-group">
+                                    <label>Z ячейки</label>
+                                    <input type="number" id="grid-nz" value="59" min="10" max="100">
+                                </div>
+                                <div class="control-group">
+                                    <label>Z первый слой (м)</label>
+                                    <input type="number" id="grid-z-first" value="500" min="100">
+                                </div>
+                            </div>
+
+                            <div id="profiles-info" class="profiles-info"></div>
+
+                            <button type="button" id="generate-coarse-btn" class="btn" style="width: 100%; margin-top: 16px;">
+                                🔧 Сгенерировать и посмотреть сетку
+                            </button>
+                        </div>
+
+                        <!-- 3D Visualization -->
+                        <div id="grid-visualization" class="grid-visualization hidden">
+                            <div class="viz-header">
+                                <h4 style="margin: 0; color: var(--color-primary);">🎯 3D Визуализация сетки</h4>
+                                <div class="viz-controls">
+                                    <button type="button" id="volume-coarse-btn" class="btn btn-sm">📊 Объёмный просмотр (volume)</button>
+                                    <button type="button" id="download-coarse-btn" class="btn btn-success btn-sm">💾 Скачать Coarse.dat</button>
+                                    <button type="button" id="use-generated-coarse-btn" class="btn btn-sm">✓ Использовать эту сетку</button>
+                                </div>
+                            </div>
+                            <div style="position: relative;">
+                                <div id="grid-canvas-container" class="grid-canvas"></div>
+                                <!-- Legend Overlay -->
+                                <div class="viz-legend">
+                                    <div class="legend-title">Легенда</div>
+                                    <div class="legend-section">
+                                        <div class="legend-subtitle">Оси координат:</div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #ff0000;"></span>
+                                            <span>X — Восток (East)</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #00ff00;"></span>
+                                            <span>Y — Север (North)</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #0088ff;"></span>
+                                            <span>Z — Глубина (Depth)</span>
+                                        </div>
+                                    </div>
+                                    <div class="legend-section">
+                                        <div class="legend-subtitle">Слои сетки:</div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #00ff88;"></span>
+                                            <span>Поверхность</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #1A9FFF;"></span>
+                                            <span>Приповерхностные слои</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #667eea;"></span>
+                                            <span>Средние слои</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <span class="legend-color" style="background: #ff4444;"></span>
+                                            <span>Глубокие слои</span>
+                                        </div>
+                                    </div>
+                                    <div class="legend-note">
+                                        💡 Используйте мышь для вращения, масштабирования и панорамирования
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="grid-stats" class="grid-stats"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+                <!-- SimPEG Import Tab Content -->
+                <div id="tab-simpeg" class="import-tab-content">
+                    <div class="simpeg-import-section">
+                        <div class="generator-header">
+                            <h4 style="color: var(--color-primary); margin: 0;">🔬 Импорт SimPEG (.npz)</h4>
+                        </div>
+                        <p style="color: var(--color-text-secondary); margin: 16px 0;">
+                            Загрузите файл результатов SimPEG (<code>mtz_simpeg_results.npz</code>). 
+                            Конвертация в <code>Profiles.dat</code> происходит в браузере.
+                        </p>
+                        <div class="generator-upload-area" id="simpeg-upload-area">
+                            <div style="font-size: 3em; margin-bottom: 10px;">📊</div>
+                            <p><strong>Загрузите .npz файл</strong></p>
+                            <p style="font-size: 0.9em; color: var(--color-text-tertiary); margin-top: 8px;">
+                                Содержит частоты, импедансы Zxy/Zyx и модель проводимости
+                            </p>
+                            <input type="file" id="simpeg-file-input" accept=".npz" style="display: none;">
+                        </div>
+
+                        <div id="simpeg-controls" class="generator-controls hidden">
+                            <div id="simpeg-info" class="profiles-info"></div>
+                            <button type="button" id="convert-simpeg-btn" class="btn" style="width: 100%; margin-top: 16px;">
+                                ⚙️ Конвертировать в Profiles.dat
+                            </button>
+                        </div>
+
+                        <div id="simpeg-result" class="grid-visualization hidden">
+                            <div class="viz-header">
+                                <h4 style="margin: 0; color: var(--color-primary);">✅ Конвертация завершена</h4>
+                                <div class="viz-controls">
+                                    <button type="button" id="simpeg-volume-btn" class="btn btn-sm">📊 Объёмная модель (volume)</button>
+                                    <button type="button" id="download-profiles-btn" class="btn btn-success btn-sm">💾 Скачать Profiles.dat</button>
+                                    <button type="button" id="use-converted-profiles-btn" class="btn btn-sm">✓ Использовать для генерации Coarse</button>
+                                </div>
+                            </div>
+                            <div id="simpeg-stats" class="grid-stats"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+                <!-- Traditional File Upload Form (Hidden, used programmatically) -->
+                <form id="file-upload-form" style="display: none;">
                     <div style="display: flex; flex-direction: column; gap: 12px;">
                         <div>
                             <label style="display: block; margin-bottom: 8px;">Файл профилей (.dat)</label>
@@ -77,6 +240,18 @@
                     <button type="submit" id="upload-file-btn" class="btn btn-success">Загрузить и начать расчёт</button>
                 </form>
 
+                <!-- Submit Button (visible) -->
+                <div id="submit-files-section" class="hidden" style="margin-top: 24px;">
+                    <button type="button" id="submit-files-btn" class="btn btn-success" style="width: 100%;">
+                        🚀 Загрузить файлы и начать расчёт
+                    </button>
+                    <div id="files-ready-status" style="margin-top: 12px; padding: 12px; background: var(--color-info-light); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--color-info);">
+                        <strong>✓ Файлы готовы к загрузке:</strong><br>
+                        <span id="ready-profiles-name">Profiles.dat</span><br>
+                        <span id="ready-coarse-name">Coarse.dat</span>
+                    </div>
+                </div>
+
                 <div id="upload-progress" class="upload-progress hidden">
                     <p>Загрузка: <span id="progress-percent">0%</span></p>
                     <div class="progress-bar-container">
@@ -85,15 +260,38 @@
                 </div>
 
                 <div id="upload-message" class="upload-message hidden"></div>
-            </div>
-
             <!-- Results Section -->
-            <div id="solution-files-container" class="files-section hidden">
+                <div id="solution-files-container" class="files-section hidden">
                 <h3>Результаты расчёта</h3>
                 <div id="files-list" class="files-grid">
                     <p class="text-muted">Файлы результатов появятся здесь после завершения расчёта</p>
                 </div>
             </div>
+
+             <!-- Ready Solution Section (zip с .vtr результатами) -->
+            <div id="ready-solution-container" class="files-section hidden">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 8px;">
+                    <h3 style="margin: 0;">📦 Готовое решение</h3>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" id="extract-zip-btn" class="btn btn-sm hidden">📂 Распаковать архив</button>
+                        <button type="button" id="download-results-zip-btn" class="btn btn-success btn-sm hidden">💾 Скачать архив (.zip)</button>
+                    </div>
+                </div>
+                <p style="color: var(--color-text-secondary); margin-bottom: 16px;">
+                    Архив результатов с файлами .vtr (3D модель удельного сопротивления).
+                    Распакованные файлы сохраняются в локальном хранилище браузера.
+                </p>
+                <div id="vtr-files-list" class="files-grid"></div>
+                <div id="vtr-loading-status" class="hidden" style="margin-top: 12px; font-size: var(--text-sm);"></div>
+            </div>
+            
+            </div>
+             
+            
+
+           
+
+           
         </div>
     </div>
 

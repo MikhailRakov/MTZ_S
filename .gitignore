@@ -4,3 +4,8 @@ serviceAccountKey.json
 *.txt
 *.py
 .vscode
+*.dat
+simpeg_test/
+simpeg_test/libs/
+simpeg_test/output/
+simpeg_test/*.npz
