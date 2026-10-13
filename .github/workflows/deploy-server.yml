@@ -36,28 +36,24 @@ jobs:
           mkdir -p ~/mtz-server/logs
           chmod 777 ~/mtz-server/logs
 
-      - name: Decode secrets
+      - name: Run new container
         run: |
-          echo "🔧 Preparing secrets directory..."
-          mkdir -p ~/mtz-server/secrets
-          
-          echo "🔑 Decoding serviceAccountKey.json..."
-          rm -rf ~/mtz-server/secrets/serviceAccountKey.json
-          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server/secrets/serviceAccountKey.json
-          chmod 600 ~/mtz-server/secrets/serviceAccountKey.json
-          
-          echo "📝 Decoding config.yml..."
-          rm -rf ~/mtz-server/secrets/config.yml
-          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/secrets/config.yml
-          chmod 600 ~/mtz-server/secrets/config.yml
-          
-          echo "✅ Verifying files..."
-          echo "--- serviceAccountKey.json ---"
-          file ~/mtz-server/secrets/serviceAccountKey.json
-          echo "--- config.yml ---"
-          file ~/mtz-server/secrets/config.yml
-          cat ~/mtz-server/secrets/config.yml
-
+          set -e
+          docker run -d --name mtz-server \
+            --restart unless-stopped \
+            --add-host=host.docker.internal:host-gateway \
+            -p 127.0.0.1:8080:8080 \
+            -e RABBITMQ_URL="${{ secrets.RABBITMQ_URL }}" \
+            -e PORT=8080 \
+            -e AWS_S3_ENDPOINT="${{ secrets.AWS_S3_ENDPOINT }}" \
+            -e AWS_S3_REGION="${{ secrets.AWS_S3_REGION }}" \
+            -e AWS_S3_BUCKET_NAME="${{ secrets.AWS_S3_BUCKET_NAME }}" \
+            -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -v ~/mtz-server/secrets/serviceAccountKey.json:/app/serviceAccountKey.json:ro \
+            -v ~/mtz-server/secrets/config.yml:/app/config.yml:ro \
+            -v ~/mtz-server/logs:/app/logs \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
@@ -67,25 +63,7 @@ jobs:
       - name: Stop old container
         run: docker rm -f mtz-server 2>/dev/null || true
 
-      - name: Run new container
-        run: |
-          set -e
-          docker run -d --name mtz-server \
-            --restart unless-stopped \
-            --add-host=host.docker.internal:host-gateway \ 
-            -p 127.0.0.1:8080:8080 \
-            -e RABBITMQ_URL="${{ secrets.RABBITMQ_URL }}" \
-            -e PORT=8080 \
-            -e AWS_S3_ENDPOINT="${{ secrets.AWS_S3_ENDPOINT }}" \
-            -e AWS_S3_REGION="${{ secrets.AWS_S3_REGION }}" \
-            -e AWS_S3_BUCKET_NAME="${{ secrets.AWS_S3_BUCKET_NAME }}" \
-            -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
-            -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-            -v ~/mtz-server/serviceAccountKey.json:/app/serviceAccountKey.json:ro \
-            -v ~/mtz-server/config.yml:/app/config.yml:ro \
-            -v ~/mtz-server/logs:/app/logs \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-
+      
       - name: Verify deployment
         run: |
           sleep 5
