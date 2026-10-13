@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: mikhailrakov/mtz_s/mtz-server   # ← ВСЁ СТРОЧНЫМИ
+  IMAGE_NAME: mikhailrakov/mtz_s/mtz-server
 
 jobs:
   build-and-push:
@@ -16,11 +16,11 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      
-      - name: Build and push Docker image
+
+      - name: Build and push image
         run: |
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
                        -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
@@ -30,13 +30,26 @@ jobs:
     needs: build-and-push
     runs-on: [self-hosted, web]
     steps:
+      - name: Prepare directories
+        run: |
+          set -e
+          mkdir -p ~/mtz-server/logs
+          chmod 777 ~/mtz-server/logs
+
+      - name: Decode secrets
+        run: |
+          set -e
+          rm -f ~/mtz-server/serviceAccountKey.json ~/mtz-server/config.yml
+          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server/serviceAccountKey.json
+          chmod 600 ~/mtz-server/serviceAccountKey.json
+          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/config.yml
+          chmod 600 ~/mtz-server/config.yml
+
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Pull latest image
-        run: |
-          set -e
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
       - name: Stop old container
         run: docker rm -f mtz-server 2>/dev/null || true
@@ -62,7 +75,7 @@ jobs:
       - name: Verify deployment
         run: |
           sleep 5
-          docker ps --filter "name=mtz-server"
+          docker ps --filter "name=mtz-server" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
           docker logs mtz-server --tail 15
 
       - name: Cleanup

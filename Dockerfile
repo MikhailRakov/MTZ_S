@@ -1,33 +1,39 @@
-# === Stage 1: Сборка Go-приложения ===
-FROM golang:1.24-bookworm AS builder
+# ====== Build stage ======
+FROM golang:1.22-alpine AS builder
+
 WORKDIR /app
+
+# Кеш зависимостей
 COPY go.mod go.sum ./
 RUN go mod download
+
+# Копируем код
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o server ./cmd/main/
 
-# === Stage 2: Финальный образ ===
-FROM ubuntu:22.04
-ENV DEBIAN_FRONTEND=noninteractive
+# Собираем статический бинарник
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s" \
+    -o /server ./cmd/main
 
-# Обновляем CA-сертификаты (решает проблему с Firebase)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && update-ca-certificates --fresh \
-    && rm -rf /var/lib/apt/lists/*
+# ====== Runtime stage ======
+FROM alpine:3.19
 
-# Создаём пользователя и директории
-RUN useradd -m appuser && \
-    mkdir -p /app/logs /app/front && \
-    chown -R appuser:appuser /app
-
-# Копируем бинарник
-COPY --from=builder --chown=appuser:appuser /app/server /app/server
-
-# Копируем фронтенд
-COPY --chown=appuser:appuser front/ /app/front/
+# Нестандартный пользователь для безопасности
+RUN adduser -D -u 1000 appuser
 
 WORKDIR /app
+
+# Копируем только бинарник
+COPY --from=builder /server /app/server
+
+# Копируем фронтенд
+COPY front/ /app/front/
+
+# Создаём папку для логов с правильными правами
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
 USER appuser
+
 EXPOSE 8080
+
 CMD ["./server"]
