@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/mtz-server
+  IMAGE_NAME: mikhailrakov/mtz_s/mtz-server   # ← ВСЁ СТРОЧНЫМИ
 
 jobs:
   build-and-push:
@@ -30,31 +30,12 @@ jobs:
     needs: build-and-push
     runs-on: [self-hosted, web]
     steps:
-      - name: Prepare directories
-        run: |
-          set -e
-          echo "📁 Создание директорий..."
-          mkdir -p ~/mtz-server/logs
-          chmod 755 ~/mtz-server
-
-      - name: Decode secrets
-        run: |
-          set -e
-          echo "🔑 Декодирование serviceAccountKey.json..."
-          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server/serviceAccountKey.json
-          chmod 600 ~/mtz-server/serviceAccountKey.json
-          
-          echo "📝 Декодирование config.yml..."
-          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/config.yml
-          chmod 600 ~/mtz-server/config.yml
-
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Pull latest image
         run: |
           set -e
-          echo "📥 Загрузка образа..."
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
       - name: Stop old container
@@ -63,7 +44,6 @@ jobs:
       - name: Run new container
         run: |
           set -e
-          echo "🚀 Запуск нового контейнера..."
           docker run -d --name mtz-server \
             --restart unless-stopped \
             -p 127.0.0.1:8080:8080 \
@@ -81,11 +61,8 @@ jobs:
 
       - name: Verify deployment
         run: |
-          echo "⏳ Ждём запуска контейнера (5 сек)..."
           sleep 5
-          docker ps --filter "name=mtz-server" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-          echo ""
-          echo "🔍 Проверяем здоровье контейнера:"
+          docker ps --filter "name=mtz-server"
           docker logs mtz-server --tail 15
 
       - name: Cleanup
