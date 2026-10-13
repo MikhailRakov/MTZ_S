@@ -541,6 +541,7 @@ export function initCoarseGenerator() {
         // что решалась в SimPEG), а не из эвристики скин-слоя.
         const coarseFromMesh = simpegNpz ? buildCoarseFromSimpeg(simpegNpz) : null;
         if (coarseFromMesh) {
+            alert ("Сеть есть в .npz");
             const coarseFile = new File([coarseFromMesh.content], 'Coarse.dat', { type: 'text/plain' });
             const dtC = new DataTransfer();
             dtC.items.add(coarseFile);
@@ -555,6 +556,7 @@ export function initCoarseGenerator() {
             checkFilesReady();
             return;
         }
+        alert ("Нет сети в .npz");
 
         // Fallback: нет данных сетки — прежний путь через генератор по станциям
         const profilesTab = document.querySelector('.import-tab[data-tab="profiles"]');
