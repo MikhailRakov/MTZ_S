@@ -36,22 +36,27 @@ jobs:
           mkdir -p ~/mtz-server/logs
           chmod 777 ~/mtz-server/logs
 
-      - name: Decode secrets
+            - name: Decode secrets
         run: |
-          set -e
+          echo "🔧 Preparing secrets directory..."
+          mkdir -p ~/mtz-server/secrets
+          
           echo "🔑 Decoding serviceAccountKey.json..."
-          rm -rf ~/mtz-server/serviceAccountKey.json
-          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server/serviceAccountKey.json
-          chmod 600 ~/mtz-server/serviceAccountKey.json
+          rm -rf ~/mtz-server/secrets/serviceAccountKey.json
+          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server/secrets/serviceAccountKey.json
+          chmod 600 ~/mtz-server/secrets/serviceAccountKey.json
           
           echo "📝 Decoding config.yml..."
-          rm -rf ~/mtz-server/config.yml
-          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/config.yml
-          chmod 600 ~/mtz-server/config.yml
+          rm -rf ~/mtz-server/secrets/config.yml
+          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/secrets/config.yml
+          chmod 600 ~/mtz-server/secrets/config.yml
           
           echo "✅ Verifying files..."
-          file ~/mtz-server/serviceAccountKey.json
-          file ~/mtz-server/config.yml
+          echo "--- serviceAccountKey.json ---"
+          file ~/mtz-server/secrets/serviceAccountKey.json
+          echo "--- config.yml ---"
+          file ~/mtz-server/secrets/config.yml
+          cat ~/mtz-server/secrets/config.yml
 
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -67,6 +72,7 @@ jobs:
           set -e
           docker run -d --name mtz-server \
             --restart unless-stopped \
+            --add-host=host.docker.internal:host-gateway \ 
             -p 127.0.0.1:8080:8080 \
             -e RABBITMQ_URL="${{ secrets.RABBITMQ_URL }}" \
             -e PORT=8080 \
