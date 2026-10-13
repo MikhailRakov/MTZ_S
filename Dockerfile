@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s" \
     -o /server ./cmd/main
 
-# ====== Runtime stage ======
+# ====== Runtime stage ====== 
 FROM alpine:3.19
 
 # Нестандартный пользователь для безопасности
