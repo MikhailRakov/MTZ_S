@@ -38,7 +38,11 @@ jobs:
 
       - name: Run new container
         run: |
-          set -e
+          set -ex  # -e останавливает при ошибке, -x выводит каждую команду для отладки
+          
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo "🚀 Запуск контейнера из образа: $IMAGE"
+          
           docker run -d --name mtz-server \
             --restart unless-stopped \
             --add-host=host.docker.internal:host-gateway \
@@ -53,7 +57,10 @@ jobs:
             -v ~/mtz-server/secrets/serviceAccountKey.json:/app/serviceAccountKey.json:ro \
             -v ~/mtz-server/secrets/config.yml:/app/config.yml:ro \
             -v ~/mtz-server/logs:/app/logs \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            "$IMAGE"
+            
+          echo "✅ Контейнер запущен. Проверка статуса:"
+          docker ps -a --filter "name=mtz-server" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
