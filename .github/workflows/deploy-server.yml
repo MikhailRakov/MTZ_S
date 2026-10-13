@@ -30,16 +30,47 @@ jobs:
     needs: build-and-push
     runs-on: [self-hosted, web]
     steps:
+      # 1. Подготовка папок
       - name: Prepare directories
         run: |
           set -e
-          mkdir -p ~/mtz-server/logs
+          mkdir -p ~/mtz-server/secrets ~/mtz-server/logs
           chmod 777 ~/mtz-server/logs
 
+      # 2. РАСКОДИРОВАНИЕ СЕКРЕТОВ (ЭТОГО ШАГА НЕ ХВАТАЛО!)
+      - name: Decode secrets
+        run: |
+          set -e
+          echo "🔑 Decoding serviceAccountKey.json..."
+          rm -rf ~/mtz-server/secrets/serviceAccountKey.json
+          echo "${{ secrets.FIREBASE_KEY_BASE64 }}" | base64 -d > ~/mtz-server/secrets/serviceAccountKey.json
+          chmod 600 ~/mtz-server/secrets/serviceAccountKey.json
+          
+          echo "📝 Decoding config.yml..."
+          rm -rf ~/mtz-server/secrets/config.yml
+          echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/secrets/config.yml
+          chmod 600 ~/mtz-server/secrets/config.yml
+          
+          echo "✅ Verifying files..."
+          file ~/mtz-server/secrets/serviceAccountKey.json
+          file ~/mtz-server/secrets/config.yml
+
+      # 3. Логин в реестр
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # 4. Скачивание образа
+      - name: Pull latest image
+        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      # 5. Остановка старого контейнера
+      - name: Stop old container
+        run: docker rm -f mtz-server 2>/dev/null || true
+
+      # 6. Запуск нового контейнера
       - name: Run new container
         run: |
-          set -ex  # -e останавливает при ошибке, -x выводит каждую команду для отладки
-          
+          set -ex
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
           echo "🚀 Запуск контейнера из образа: $IMAGE"
           
@@ -61,21 +92,14 @@ jobs:
             
           echo "✅ Контейнер запущен. Проверка статуса:"
           docker ps -a --filter "name=mtz-server" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
-      - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Pull latest image
-        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-
-      - name: Stop old container
-        run: docker rm -f mtz-server 2>/dev/null || true
-
-      
+      # 7. Проверка
       - name: Verify deployment
         run: |
           sleep 5
           docker ps --filter "name=mtz-server" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-          docker logs mtz-server --tail 15
+          docker logs mtz-server --tail 20
 
+      # 8. Очистка
       - name: Cleanup
         run: docker image prune -f
