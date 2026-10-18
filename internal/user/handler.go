@@ -417,6 +417,9 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        messageBody,
+			// Очередь durable, но без persistent-флага сообщения теряются
+			// при перезапуске брокера — задача исчезла бы без следа
+			DeliveryMode: amqp.Persistent,
 		})
 	if err != nil {
 		h.logger.Errorf("Failed to publish message to RabbitMQ: %v", err)
