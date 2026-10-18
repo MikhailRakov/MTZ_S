@@ -220,6 +220,17 @@ export function buildSimpegStations(npz) {
     const { nFreq, nStations, comp, tipper, rxLocs } = npz;
     const stations = [];
 
+    // Если в .npz есть сетка, станции обязаны быть настоящими: синтетические
+    // координаты могут выпасть из grid'а → падение MATLAB (InterpMatTopo_MT)
+    if (npz.model && (!rxLocs || rxLocs.length < nStations)) {
+        throw new Error(`В .npz ${rxLocs ? rxLocs.length : 0} координат rx_locs на ${nStations} станций — невозможно построить геометрию`);
+    }
+
+    // AP3DMT: z положительна ВНИЗ от дневной поверхности (Read_Data_MT.m:
+    // "z positive downwards, for elevation z is negative"); SimPEG: z вверх.
+    // Преобразование: z_ap3dmt = zSurface − z_simpeg.
+    const { zSurface } = simpegSurface(npz);
+
     for (let s = 0; s < nStations; s++) {
         let x;
         let y;
@@ -231,6 +242,11 @@ export function buildSimpegStations(npz) {
             y = 0;
             z = 0;
         }
+        if (!isFinite(x) || !isFinite(y)) {
+            throw new Error(`Станция ${s + 1}: некорректные координаты в rx_locs (NaN/Infinity)`);
+        }
+        if (!isFinite(z)) z = 0;
+        const zDown = npz.model ? (zSurface - z) : z;
 
         // Данные лежат как (nFreq, nStations), то есть плоский индекс k*nStations + s
         const pick = (c, k) => {
@@ -239,7 +255,7 @@ export function buildSimpegStations(npz) {
         };
 
         const st = {
-            x, y, z, code: null,
+            x, y, z: zDown, code: null,
             Zxx: [], Zxy: [], Zyx: [], Zyy: [], Tx: [], Ty: [],
         };
         for (let k = 0; k < nFreq; k++) {
@@ -426,55 +442,224 @@ function exp5plus(v) {
     return `+${m[1]}E${m[2]}${m[3].padStart(2, '0')}`;
 }
 
+// ---------------------------------------------------------------------------
+// Требования AP3DMT (проверено по исходникам ReadModel_MT.m, Read_Data_MT.m,
+// InterpMatTopo_MT.m, Parameter_File.m):
+//  1. Coarse.dat содержит ТОЛЬКО землю: программа сама добавляет nzAir=10
+//     воздушных слоёв (Parameter_File.m) поверх модели; поверхность земли =
+//     верх файла = z=0. Воздушные ячейки SimPEG в файл писать нельзя.
+//  2. z положительна ВНИЗ ("z is +ve downward", ReadModel_MT.m); станции выше
+//     поверхности имеют отрицательный Z (Read_Data_MT.m).
+//  3. airthk = grid_air_alpha.^(0:nzAir-1) .* M1.c(1:nzAir) — в файле должно
+//     быть не меньше 10 z-слоёв, иначе MATLAB упадёт на размерах матриц.
+//  4. Индексы интерполяции InterpMatTopo_MT: ind = find(grid <= coord).end и
+//     затем (ix-2), a(ix+1), cxgH(ix+1), T(11) c ix+2 ... Станция НА КРАЮ
+//     сетки (или в первых 1.5 ячейках от края) даёт пустой find / индекс < 2
+//     → "Array indices must be positive integers" (строка 362). Безопасная
+//     зона: [origin + a1 + a2/2, край − aN − a(N-1)/2] по каждой оси X/Y.
+// ---------------------------------------------------------------------------
+const AIR_RHO_CUT = 1e6;              // rho ≥ 1e6 Ом·м считается воздухом
+const GROUND_BACKGROUND_RHO = 100;    // фон для маскированных ячеек (как в эталоне)
+const MIN_NZ_FOR_AIR = 10;            // nzAir=10: нужно c(1:10) (ReadModel_MT.m:81)
+const PAD_GROWTH = 1.3;               // рост добавляемых ячеек наружу
+const MAX_PAD_CELLS = 32;             // предохранитель цикла добивки
+const STATION_MARGIN_EPS = 1e-6;
+
 /**
- * Coarse.dat напрямую из сетки .npz (та же mesh, что решалась в SimPEG).
- * Сохраняет ВСЕ слои, включая воздушные — сетка идентична исходной из .npz.
+ * Число верхних слоёв сетки .npz, целиком состоящих из воздуха/маски
+ * (слой считается воздушным, если ВСЕ его ячейки не являются землёй).
+ */
+function countAirLayersTop(model) {
+    const { sigma, hx, hy, hz } = model;
+    const nX = hx.length, nY = hy.length, nZ = hz.length;
+    let air = 0;
+    for (let k = nZ - 1; k >= 0; k--) {          // k — индекс .npz (снизу вверх), идём с верха
+        let allAir = true;
+        for (let j = 0; j < nY && allAir; j++) {
+            for (let i = 0; i < nX && allAir; i++) {
+                const s = sigma[i + j * nX + k * nX * nY];
+                const rho = s > 0 ? 1 / s : NaN;
+                if (isFinite(rho) && rho < AIR_RHO_CUT) allAir = false;
+            }
+        }
+        if (!allAir) break;
+        air++;
+    }
+    return air;
+}
+
+/**
+ * Высота дневной поверхности сетки SimPEG (z вверх) и число воздушных
+ * слоёв. Без mesh_origin предполагаем центрированную сетку ('CCN') —
+ * поверхность на z=0.
+ */
+export function simpegSurface(npz) {
+    if (!npz.model) return { zSurface: 0, airLayers: 0 };
+    const { hz, origin } = npz.model;
+    const airLayers = countAirLayersTop(npz.model);
+    const nGround = hz.length - airLayers;
+    let ground = 0;
+    for (let k = 0; k < nGround; k++) ground += hz[k];
+    const zSurface = origin ? (origin[2] || 0) + ground : 0;
+    return { zSurface, airLayers };
+}
+
+/**
+ * Coarse.dat напрямую из сетки .npz (та же mesh, что решалась в SimPEG),
+ * приведённая к требованиям AP3DMT:
+ *   - воздушные слои SimPEG ОТРЕЗАЮТСЯ (AP3DMT добавляет воздух сам);
+ *   - маскированные/воздушные ячейки внутри земли → фоновые 100 Ом·м;
+ *   - сетка добивается по X/Y, пока все станции не окажутся в безопасной
+ *     зоне (≥1.5 ячейки от каждого края) — иначе InterpMatTopo_MT падает
+ *     с "Array indices must be positive integers";
+ *   - если слоёв земли < 10 — дно добивается (нужно для airthk).
  * z — сверху вниз (требование формата Coarse.dat).
- * Возвращает { content, nX, nY, nZ } или null, если в .npz нет модели.
+ * Возвращает { content, nX, nY, nZ, airLayersRemoved, pad, backgroundFilled,
+ * originX, originY } или null, если в .npz нет модели.
  */
 export function buildCoarseFromSimpeg(npz) {
     if (!npz.model) return null;
-    const { sigma, hx, hy, hz } = npz.model;
-    const nX = hx.length, nY = hy.length, nZ = hz.length;
+    const { sigma, hx, hy, hz, origin } = npz.model;
+    const nX0 = hx.length, nY0 = hy.length, nZ0 = hz.length;
 
-    // z в Coarse.dat: сверху вниз (поверхность -> дно); в .npz z снизу вверх.
-    // Сохраняем все слои, включая воздушные — сетка должна совпадать с .npz.
-    const zOrder = [];
-    for (let k = nZ - 1; k >= 0; k--) zOrder.push(k);
-    const zCells = zOrder.map(k => hz[k]);
+    const { airLayers } = simpegSurface(npz);
+    const nGround = nZ0 - airLayers;
+    if (nGround < 2) {
+        throw new Error('В сетке .npz нет подповерхностных слоёв (весь объём — воздух)');
+    }
 
-    // Сопротивления: для каждого z-слоя (сверху вниз) ny строк по nx значений,
-    // пустая строка между слоями (как в эталоне Coarse.dat).
-    const blocks = [];
-    for (const k of zOrder) {
-        const rows = [];
-        for (let j = 0; j < nY; j++) {
+    // z сверху вниз: k = nGround-1 .. 0 (индексы .npz идут снизу вверх)
+    const zCells = [];
+    for (let k = nGround - 1; k >= 0; k--) zCells.push(hz[k]);
+
+    // rho[kTop][j][i]; воздух/NaN/σ≤0 внутри земли → фоновое значение
+    let backgroundFilled = 0;
+    const grid = [];
+    for (let k = nGround - 1; k >= 0; k--) {
+        const layer = [];
+        for (let j = 0; j < nY0; j++) {
             const row = [];
-            for (let i = 0; i < nX; i++) {
-                const s = sigma[i + j * nX + k * nX * nY];
-                row.push(exp5plus(1 / s));
+            for (let i = 0; i < nX0; i++) {
+                const s = sigma[i + j * nX0 + k * nX0 * nY0];
+                const rho = s > 0 ? 1 / s : NaN;
+                if (isFinite(rho) && rho > 0 && rho < AIR_RHO_CUT) {
+                    row.push(rho);
+                } else {
+                    row.push(GROUND_BACKGROUND_RHO);
+                    backgroundFilled++;
+                }
             }
-            rows.push(row.join(' '));
+            layer.push(row);
         }
-        blocks.push(rows.join('\n'));
+        grid.push(layer);
+    }
+
+    // Дно: минимум MIN_NZ_FOR_AIR слоёв (ReadModel_MT.m строит airthk из c(1:10))
+    let deepPad = 0;
+    while (zCells.length < MIN_NZ_FOR_AIR && deepPad < 64) {
+        const last = zCells[zCells.length - 1];
+        zCells.push(last * PAD_GROWTH);
+        grid.push(grid[grid.length - 1].map(row => row.slice())); // копия deepest слоя
+        deepPad++;
+    }
+
+    // Сетка и origin
+    let xCells = hx.slice();
+    let yCells = hy.slice();
+    const sum = arr => arr.reduce((a, b) => a + b, 0);
+    let ox = origin ? origin[0] : -sum(xCells) / 2;
+    let oy = origin ? origin[1] : -sum(yCells) / 2;
+
+    // Станции — для добивки краёв. Без rx_locs геометрию не гарантировать.
+    if (!npz.rxLocs || !npz.rxLocs.length) {
+        throw new Error('В .npz нет rx_locs — невозможно совместить станции с сеткой');
+    }
+    const stX = npz.rxLocs.map(r => r[0]);
+    const stY = npz.rxLocs.map(r => r[1]);
+    if (stX.some(v => !isFinite(v)) || stY.some(v => !isFinite(v))) {
+        throw new Error('В rx_locs есть NaN/Infinity координаты — проверьте .npz');
+    }
+    const minX = Math.min(...stX), maxX = Math.max(...stX);
+    const minY = Math.min(...stY), maxY = Math.max(...stY);
+
+    // Добивка X/Y наружу геометрически растущими ячейками + продление rho
+    // копированием краевых значений. Условие безопасности (InterpMatTopo_MT):
+    //   запад:  minX − ox ≥ a(1) + a(2)/2
+    //   восток: (ox + Σa) − maxX ≥ a(N) + a(N−1)/2
+    const needLo = cells => cells[0] + (cells[1] ?? cells[0]) / 2 + STATION_MARGIN_EPS;
+    const needHi = cells => cells[cells.length - 1] +
+        (cells[cells.length - 2] ?? cells[cells.length - 1]) / 2 + STATION_MARGIN_EPS;
+
+    let padW = 0, padE = 0, padS = 0, padN = 0;
+    let guard = 0;
+    while (minX - ox < needLo(xCells) && guard++ < MAX_PAD_CELLS) {
+        const c = xCells[0] * PAD_GROWTH;
+        ox -= c;
+        xCells.unshift(c);
+        for (const layer of grid) for (const row of layer) row.unshift(row[0]);
+        padW++;
+    }
+    guard = 0;
+    while ((ox + sum(xCells)) - maxX < needHi(xCells) && guard++ < MAX_PAD_CELLS) {
+        const c = xCells[xCells.length - 1] * PAD_GROWTH;
+        xCells.push(c);
+        for (const layer of grid) for (const row of layer) row.push(row[row.length - 1]);
+        padE++;
+    }
+    guard = 0;
+    while (minY - oy < needLo(yCells) && guard++ < MAX_PAD_CELLS) {
+        const c = yCells[0] * PAD_GROWTH;
+        oy -= c;
+        yCells.unshift(c);
+        for (const layer of grid) layer.unshift(layer[0].slice());
+        padS++;
+    }
+    guard = 0;
+    while ((oy + sum(yCells)) - maxY < needHi(yCells) && guard++ < MAX_PAD_CELLS) {
+        const c = yCells[yCells.length - 1] * PAD_GROWTH;
+        yCells.push(c);
+        for (const layer of grid) layer.push(layer[layer.length - 1].slice());
+        padN++;
+    }
+
+    // Финальная проверка геометрии — лучше ошибка в браузере, чем падение
+    // MATLAB через несколько часов расчёта
+    const nX = xCells.length, nY = yCells.length, nZ = zCells.length;
+    const errs = [];
+    if (minX - ox < needLo(xCells)) errs.push(`станции выходят за западный край сетки (X=${minX})`);
+    if ((ox + sum(xCells)) - maxX < needHi(xCells)) errs.push(`станции выходят за восточный край сетки (X=${maxX})`);
+    if (minY - oy < needLo(yCells)) errs.push(`станции выходят за южный край сетки (Y=${minY})`);
+    if ((oy + sum(yCells)) - maxY < needHi(yCells)) errs.push(`станции выходят за северный край сетки (Y=${maxY})`);
+    if (errs.length) {
+        throw new Error(`Сетка .npz слишком мала для станций: ${errs.join('; ')}`);
     }
 
     const ts = new Date().toISOString().split('T')[0];
     let content = `Coarse model written by SimPEG ${ts}\n`;
     content += `${nX} ${nY} ${nZ} 0   LINEAR\n`;
-    content += hx.map(v => v.toFixed(2)).join(' ') + '\n';
-    content += hy.map(v => v.toFixed(2)).join(' ') + '\n';
+    content += xCells.map(v => v.toFixed(2)).join(' ') + '\n';
+    content += yCells.map(v => v.toFixed(2)).join(' ') + '\n';
     content += zCells.map(v => v.toFixed(2)).join(' ') + '\n';
+    // Блоки rho: на слой nY строк по nX значений, пустая строка между слоями.
+    // Порядок колонок/строк — как у coarseGenerator (эталонный путь).
+    const blocks = grid.map(layer =>
+        layer.map(row => row.map(v => exp5plus(v)).join(' ')).join('\n'));
     content += blocks.join('\n\n') + '\n';
-    // Origin = левый нижний угол модели: ox = mesh_origin[0], oy = mesh_origin[1],
-    // oz = 0 (поверхность z=0; сетка включает все слои из .npz).
-    // Если mesh_origin нет в .npz — вычисляем из сумм ширин ячеек (сетка центрирована).
-    const sumX = hx.reduce((a, b) => a + b, 0);
-    const sumY = hy.reduce((a, b) => a + b, 0);
-    const ox = npz.model.origin ? npz.model.origin[0] : -sumX / 2;
-    const oy = npz.model.origin ? npz.model.origin[1] : -sumY / 2;
+    // Origin = западно-южный угол модели; z=0 — поверхность (воздух AP3DMT
+    // достроит сам вверх от неё).
     content += `${ox.toFixed(2)} ${oy.toFixed(2)} 0.00\n`;
-    return { content, nX, nY, nZ };
+
+    console.log(`[SIMPEG→COARSE] ${nX0}×${nY0}×${nZ0} → ${nX}×${nY}×${nZ}: ` +
+        `воздуха срезано ${airLayers} сл., добивка X −${padW}/+${padE}, Y −${padS}/+${padN}, ` +
+        `дно +${deepPad}, фон вместо маски ${backgroundFilled} яч.`);
+
+    return {
+        content, nX, nY, nZ,
+        airLayersRemoved: airLayers,
+        pad: { west: padW, east: padE, south: padS, north: padN, deep: deepPad },
+        backgroundFilled,
+        originX: ox, originY: oy,
+    };
 }
 
 /** Высокоуровневая функция: сырые .npy байты -> текст Profiles.dat. */
