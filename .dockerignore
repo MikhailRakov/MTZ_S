@@ -9,3 +9,10 @@ serviceAccountKey.json
 config.yml
 .git
 .github
+.env
+.env.*
+*.md
+node_modules
+*.dat
+*.zip
+.DS_Store
