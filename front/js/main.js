@@ -327,13 +327,14 @@ initCoarseGenerator();
     async function fetchQueueStats() {
         try {
             const response = await fetch('/api/system/stats');
-            if (!response.ok) {
+            // Даже при 503 сервер возвращает JSON { queue_ready: false } —
+            // это «брокер временно недоступен» (offline), а не ошибка сервера
+            const data = await response.json().catch(() => null);
+            if (!response.ok && !(data && data.queue_ready === false)) {
                 throw new Error(`HTTP ${response.status}`);
             }
 
-            const data = await response.json();
-
-            if (!data.queue_ready) {
+            if (!data || !data.queue_ready) {
                 // Очередь недоступна
                 widget.classList.remove('queue-online');
                 widget.classList.add('queue-offline');

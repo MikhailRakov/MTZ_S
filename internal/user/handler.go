@@ -15,7 +15,8 @@ import (
 	"time"
 
 	"3dmtzinversionservice/internal/handlers" // Убедитесь, что путь правильный
-	"3dmtzinversionservice/pkg/logging"       // Убедитесь, что путь правильный
+	"3dmtzinversionservice/internal/rabbitmq"
+	"3dmtzinversionservice/pkg/logging" // Убедитесь, что путь правильный
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
@@ -54,18 +55,18 @@ type handler struct {
 	logger      *logging.Logger
 	firebaseApp *firebase.App // Добавляем зависимость от Firebase App
 	authClient  *auth.Client  // Добавляем зависимость от Auth Client
-	rabbitCh    *amqp.Channel
+	rabbit      *rabbitmq.Manager
 	s3Client    *s3.Client
 }
 
 // NewHandler создает новый экземпляр handler.
 // Мы передаем зависимости через конструктор.
-func NewHandler(logger *logging.Logger, firebaseApp *firebase.App, authClient *auth.Client, rabbitCh *amqp.Channel, s3Client *s3.Client) handlers.Handler {
+func NewHandler(logger *logging.Logger, firebaseApp *firebase.App, authClient *auth.Client, rabbit *rabbitmq.Manager, s3Client *s3.Client) handlers.Handler {
 	return &handler{
 		logger:      logger,
 		firebaseApp: firebaseApp, // Сохраняем зависимости
 		authClient:  authClient,  //
-		rabbitCh:    rabbitCh,
+		rabbit:      rabbit,
 		s3Client:    s3Client,
 	}
 }
@@ -339,8 +340,8 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 		return
 	}
 
-	if h.rabbitCh == nil {
-		h.logger.Error("RabbitMQ channel is not initialized in UploadSolutionFile")
+	if h.rabbit == nil {
+		h.logger.Error("RabbitMQ manager is not initialized in UploadSolutionFile")
 		http.Error(w, "Internal server error: RabbitMQ channel not available", http.StatusInternalServerError)
 		return
 	}
@@ -401,26 +402,15 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 		return
 	}
 
-	// Отправляем сообщение в очередь
-	if h.rabbitCh == nil {
-		h.logger.Error("RabbitMQ channel is not initialized")
+	// Отправляем сообщение в очередь (Manager сам переподключится,
+	// если соединение с брокером умерло)
+	if h.rabbit == nil {
+		h.logger.Error("RabbitMQ manager is not initialized")
 		http.Error(w, "Internal server error: Messaging system unavailable", http.StatusInternalServerError)
 		return
 	}
 
-	err = h.rabbitCh.PublishWithContext(
-		r.Context(),
-		"",
-		"calculation_tasks", // routing key (имя вашей очереди)
-		false,               // mandatory
-		false,               // immediate
-		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        messageBody,
-			// Очередь durable, но без persistent-флага сообщения теряются
-			// при перезапуске брокера — задача исчезла бы без следа
-			DeliveryMode: amqp.Persistent,
-		})
+	err = h.publishTask(r.Context(), messageBody)
 	if err != nil {
 		h.logger.Errorf("Failed to publish message to RabbitMQ: %v", err)
 		http.Error(w, "Failed to send task to queue", http.StatusInternalServerError)
@@ -846,33 +836,84 @@ func (h *handler) GetSolutionStatus(w http.ResponseWriter, r *http.Request, ps h
 	w.Write(body)
 }
 
+// publishTask публикует сообщение задачи в очередь с одной повторной
+// попыткой: если канал умер прямо во время публикации, Manager при втором
+// обращении переподключится.
+func (h *handler) publishTask(ctx context.Context, body []byte) error {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		ch, err := h.rabbit.Channel()
+		if err != nil {
+			return err
+		}
+		pubCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err = ch.PublishWithContext(
+			pubCtx,
+			"",
+			"calculation_tasks", // routing key (имя вашей очереди)
+			false,               // mandatory
+			false,               // immediate
+			amqp.Publishing{
+				ContentType: "application/json",
+				Body:        body,
+				// Очередь durable, но без persistent-флага сообщения теряются
+				// при перезапуске брокера — задача исчезла бы без следа
+				DeliveryMode: amqp.Persistent,
+			})
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		h.logger.Errorf("Publish attempt %d failed: %v", attempt+1, err)
+	}
+	return lastErr
+}
+
+// inspectQueue запрашивает состояние очереди с одной повторной попыткой
+// (канал мог умереть прямо перед вызовом — Manager переподключится).
+func (h *handler) inspectQueue() (amqp.Queue, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		ch, err := h.rabbit.Channel()
+		if err != nil {
+			return amqp.Queue{}, err
+		}
+		q, err := ch.QueueInspect("calculation_tasks")
+		if err == nil {
+			return q, nil
+		}
+		lastErr = err
+	}
+	return amqp.Queue{}, lastErr
+}
+
 // GetQueueStats возвращает статистику очереди RabbitMQ (количество активных консьюмеров)
 func (h *handler) GetQueueStats(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	if h.rabbitCh == nil {
-		w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.rabbit == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"active_consumers": 0,
 			"queue_ready":      false,
-			"message":          "RabbitMQ channel is not available",
+			"message":          "RabbitMQ is not configured",
 		})
 		return
 	}
 
-	queue, err := h.rabbitCh.QueueInspect("calculation_tasks")
+	queue, err := h.inspectQueue()
 	if err != nil {
 		h.logger.Errorf("Failed to inspect RabbitMQ queue: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"active_consumers": 0,
 			"queue_ready":      false,
-			"message":          "Failed to inspect queue",
+			"message":          "RabbitMQ is not available",
 		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"active_consumers": queue.Consumers,
 		"messages_pending": queue.Messages,
