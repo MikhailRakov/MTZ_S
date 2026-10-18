@@ -31,20 +31,35 @@
             <img src="a_ficon.gif" alt="3D MT Icon">
         </div>
         <h1 class="header-title">3D MT Inversion</h1>
-        <div class="user-profile">
-            <div class="user-avatar" id="user-avatar-small">AB</div>
-            <!-- Profile Dropdown -->
-            <div class="profile-dropdown" id="profile-dropdown">
-                <div class="profile-info">
-                    <div class="profile-avatar" id="user-avatar-large">AB</div>
-                    <div class="profile-details">
-                        <p class="profile-name" id="profile-name">Загрузка...</p>
-                        <p class="profile-email" id="profile-email">Загрузка...</p>
-                    </div>
+        <div class="header-right">
+            <!-- Статистика очереди: активные серверы расчёта + задачи в очереди.
+                 Опрос /api/system/stats каждые 10 с — см. initQueueStatsWidget в main.js -->
+            <div id="queue-stats-widget" class="queue-stats-widget" title="Статистика очереди расчётов">
+                <span class="queue-stats-icon">🖥️</span>
+                <div class="queue-stats-info">
+                    <span class="queue-stats-label">Серверы расчёта</span>
+                    <span id="queue-stats-consumers" class="queue-stats-value">—</span>
                 </div>
-                <button id="logout-btn" class="logout-button">Выйти</button>
+                <div id="queue-stats-pending-section" class="queue-stats-pending" style="display: none;">
+                    <span class="queue-stats-pending-label">в очереди:</span>
+                    <span id="queue-stats-pending" class="queue-stats-pending-value">0</span>
+                </div>
             </div>
-        </div>
+
+            <div class="user-profile">
+                <div class="user-avatar" id="user-avatar-small">AB</div>
+                <!-- Profile Dropdown -->
+                <div class="profile-dropdown" id="profile-dropdown">
+                    <div class="profile-info">
+                        <div class="profile-avatar" id="user-avatar-large">AB</div>
+                        <div class="profile-details">
+                            <p class="profile-name" id="profile-name">Загрузка...</p>
+                            <p class="profile-email" id="profile-email">Загрузка...</p>
+                        </div>
+                    </div>
+                    <button id="logout-btn" class="logout-button">Выйти</button>
+                </div>
+            </div>
         </div>
     </header>
 
@@ -295,7 +310,6 @@
 
            
         </div>
-    </div>
 
     <!-- Modal: Create New Solution -->
     <div id="create-solution-modal" class="modal hidden">
