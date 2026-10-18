@@ -417,6 +417,9 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        messageBody,
+			// Очередь durable, но без persistent-флага сообщения теряются
+			// при перезапуске брокера — задача исчезла бы без следа
+			DeliveryMode: amqp.Persistent,
 		})
 	if err != nil {
 		h.logger.Errorf("Failed to publish message to RabbitMQ: %v", err)
@@ -843,6 +846,40 @@ func (h *handler) GetSolutionStatus(w http.ResponseWriter, r *http.Request, ps h
 	w.Write(body)
 }
 
+// GetQueueStats возвращает статистику очереди RabbitMQ (количество активных консьюмеров)
+func (h *handler) GetQueueStats(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	if h.rabbitCh == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"active_consumers": 0,
+			"queue_ready":      false,
+			"message":          "RabbitMQ channel is not available",
+		})
+		return
+	}
+
+	queue, err := h.rabbitCh.QueueInspect("calculation_tasks")
+	if err != nil {
+		h.logger.Errorf("Failed to inspect RabbitMQ queue: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"active_consumers": 0,
+			"queue_ready":      false,
+			"message":          "Failed to inspect queue",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"active_consumers": queue.Consumers,
+		"messages_pending": queue.Messages,
+		"queue_ready":      true,
+	})
+}
+
 // Register регистрирует маршруты для обработчиков.
 func (h *handler) Register(router *httprouter.Router) {
 	// === МАРШРУТЫ С :solutionID (должны быть вместе) ===
@@ -861,4 +898,7 @@ func (h *handler) Register(router *httprouter.Router) {
 	// ❗ ВАЖНО: Этот маршрут НЕ должен содержать :solutionID,
 	// чтобы не конфликтовать с остальными
 	router.GET("/api/users/self/downloads/url", h.GetPresignedURL)
+
+	// === СИСТЕМНЫЕ МАРШРУТЫ ===
+	router.GET("/api/system/stats", h.GetQueueStats)
 }

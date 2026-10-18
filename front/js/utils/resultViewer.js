@@ -101,6 +101,29 @@ export class ResultViewer {
         this._valid = null;         // Uint8Array — 1, если rho>0 и конечно
         this._tmpMatrix = new THREE.Matrix4();
         this._tmpColor = new THREE.Color();
+
+        // Границы сетки в координатах сцены (для DDA-пика) и глубины слоёв
+        this._boundsX = null;       // [nY+1] scene X (восток, из yCells)
+        this._boundsY = null;       // [nX+1] scene Y (север, из xCells)
+        this._boundsZ = null;       // [nZ+1] scene Z (возрастающий: -zExtent..0)
+        this._zCum = null;          // [nZ+1] накопительная глубина слоёв, м
+        this._nXY = 0;              // nX * nY — число ячеек в одном Z-слое
+
+        // === Режим редактирования сопротивлений ячеек ===
+        this.editing = false;
+        this.editMode = 'paint';    // 'paint' (кисть) | 'select' (выделение)
+        this.brushRho = null;       // текущее значение ρ кисти, Ом·м
+        this.columnMode = false;    // красить всю колонку по Z
+        this.layerFilter = null;    // номер модельного слоя k или null (весь объём)
+        this.selection = new Set(); // выбранные ячейки (плоские индексы)
+        this._editOptions = {};     // колбэки: onCellsEdited, onHoverCell, onSelectionChanged
+        this._hoverIdx = -1;
+        this._hoverBox = null;
+        this._selectionLines = null;
+        this._layerGridMesh = null; // LineSegments — сетка границ ячеек активного слоя
+        this._strokeCells = null;   // ячейки текущей кисти (коммитятся на pointerup)
+        this._raycaster = null;
+        this._editHandlers = null;
     }
 
     // === Парсинг (оставлен для совместимости с coarse-интеграцией) ===
@@ -159,6 +182,9 @@ export class ResultViewer {
 
     // === Инициализация 3D-сцены ===
     init3DVisualization(containerElement, modelData) {
+        if (!modelData || !Array.isArray(modelData.rhoValues)) {
+            throw new Error('modelData.rhoValues отсутствует или не массив — обновите страницу (Ctrl+Shift+R), возможно браузер использует кэш старых модулей');
+        }
         this.modelData = modelData;
         this._prepareCellCache(modelData);
 
@@ -287,6 +313,22 @@ export class ResultViewer {
             maxRho: this.settings.maxRho ?? dataMax,
             paletteName: this.settings.colormap,
         };
+
+        // Границы ячеек в координатах сцены — для быстрого аналитического
+        // пика лучом (DDA-обход регулярной сетки вместо raycast по InstancedMesh).
+        //   scene X (восток)  -> границы из yCells, индекс ячейки = model j (Y)
+        //   scene Y (север)   -> границы из xCells, индекс ячейки = model i (X)
+        //   scene Z (вверх)   -> возрастающий массив от -zExtent до 0,
+        //                        индекс scene-ячейки kz = nZ-1-k (k — слой модели)
+        this._boundsX = eastPositions.map(v => v + eastOffset);
+        this._boundsY = northPositions.map(v => v + northOffset);
+        const bz = new Array(zPositions.length);
+        for (let m = 0; m < zPositions.length; m++) {
+            bz[m] = -zPositions[zPositions.length - 1 - m];
+        }
+        this._boundsZ = bz;
+        this._zCum = zPositions.slice(); // накопительные глубины (м, от поверхности)
+        this._nXY = nX * nY;             // ячеек в одном Z-слое (для layer-фильтра)
     }
 
     // === Построение InstancedMesh ===
@@ -326,39 +368,51 @@ export class ResultViewer {
     // Полный пересчёт матриц и цветов всех ячеек (дорогая операция).
     _rebuildAllInstances() {
         const total = this._cellCenters.length / 3;
+        for (let i = 0; i < total; i++) {
+            this._updateInstance(i);
+        }
+        this.modelMesh.instanceMatrix.needsUpdate = true;
+        if (this.modelMesh.instanceColor) this.modelMesh.instanceColor.needsUpdate = true;
+    }
+
+    // Пересчёт матрицы и цвета ОДНОЙ ячейки (для точечных правок при редактировании).
+    _updateInstance(idx) {
         const { minRho, maxRho, colormap } = this.settings;
         const logMin = Math.log10(minRho);
         const logMax = Math.log10(maxRho);
         const logSpan = logMax - logMin;
         const palette = colormaps[colormap] || colormaps.jet;
 
-        for (let i = 0; i < total; i++) {
-            const off3 = i * 3;
-            const valid = this._valid[i];
-            const logR = this._logRho[i];
+        const off3 = idx * 3;
+        const valid = this._valid[idx];
+        const logR = this._logRho[idx];
 
-            if (!valid || logR < logMin || logR > logMax) {
-                // Скрытая ячейка — scale 0
-                this._tmpMatrix.makeScale(0, 0, 0);
-            } else {
-                const t = logSpan > 0 ? (logR - logMin) / logSpan : 0.5;
-                const [r, g, b] = palette(Math.max(0, Math.min(1, t)));
-                this._tmpColor.setRGB(r, g, b);
-                this.modelMesh.setColorAt(i, this._tmpColor);
+        // Layer-фильтр: если активен конкретный Z-слой, остальные скрыты
+        const layerHidden = this.layerFilter != null &&
+            this._nXY > 0 &&
+            ((idx / this._nXY) | 0) !== this.layerFilter;
 
-                this._tmpMatrix.makeScale(
-                    this._cellSizes[off3],
-                    this._cellSizes[off3 + 1],
-                    this._cellSizes[off3 + 2],
-                );
-                this._tmpMatrix.setPosition(
-                    this._cellCenters[off3],
-                    this._cellCenters[off3 + 1],
-                    this._cellCenters[off3 + 2],
-                );
-            }
-            this.modelMesh.setMatrixAt(i, this._tmpMatrix);
+        if (!valid || layerHidden || logR < logMin || logR > logMax) {
+            // Скрытая ячейка — scale 0
+            this._tmpMatrix.makeScale(0, 0, 0);
+        } else {
+            const t = logSpan > 0 ? (logR - logMin) / logSpan : 0.5;
+            const [r, g, b] = palette(Math.max(0, Math.min(1, t)));
+            this._tmpColor.setRGB(r, g, b);
+            this.modelMesh.setColorAt(idx, this._tmpColor);
+
+            this._tmpMatrix.makeScale(
+                this._cellSizes[off3],
+                this._cellSizes[off3 + 1],
+                this._cellSizes[off3 + 2],
+            );
+            this._tmpMatrix.setPosition(
+                this._cellCenters[off3],
+                this._cellCenters[off3 + 1],
+                this._cellCenters[off3 + 2],
+            );
         }
+        this.modelMesh.setMatrixAt(idx, this._tmpMatrix);
         this.modelMesh.instanceMatrix.needsUpdate = true;
         if (this.modelMesh.instanceColor) this.modelMesh.instanceColor.needsUpdate = true;
     }
@@ -411,10 +465,545 @@ export class ResultViewer {
         this.setWireframe(false);
     }
 
+    // === Выбор Z-слоя: изоляция и редактирование одного слоя ===
+
+    // Устанавливает фильтр слоя: k — номер модельного слоя (0 = верхний),
+    // null — показывать весь объём. Скрытые слои не видны и некликабельны.
+    setLayerFilter(k) {
+        const nZ = this.modelData ? this.modelData.nZ : 0;
+        this.layerFilter = (k == null || k < 0 || k >= nZ) ? null : (k | 0);
+        this._rebuildAllInstances();
+        // Сетка границ ячеек активного слоя — помогает точно попадать в ячейки
+        this._disposeLayerGrid();
+        if (this.layerFilter != null) {
+            this._layerGridMesh = this._buildLayerGrid(this.layerFilter);
+            this.scene.add(this._layerGridMesh);
+        }
+    }
+
+    // Диапазон глубин слоя k (метры от поверхности, положительное вниз).
+    getLayerDepthRange(k) {
+        if (!this._zCum || k < 0 || k + 1 >= this._zCum.length) return null;
+        return { top: this._zCum[k], bottom: this._zCum[k + 1] };
+    }
+
+    // Линии границ ВСЕХ ячеек слоя k на его верхней грани.
+    // (nX+1)+(nY+1) отрезков — дёшево даже для большой сетки.
+    _buildLayerGrid(k) {
+        const { nX, nY } = this.modelData;
+        const zTop = -this._zCum[k];
+        const positions = [];
+        // Линии вдоль scene X на каждой границе scene Y (границы из xCells)
+        const x0 = this._boundsX[0];
+        const x1 = this._boundsX[nY];
+        for (let i = 0; i <= nX; i++) {
+            const y = this._boundsY[i];
+            positions.push(x0, y, zTop, x1, y, zTop);
+        }
+        // Линии вдоль scene Y на каждой границе scene X (границы из yCells)
+        const y0 = this._boundsY[0];
+        const y1 = this._boundsY[nX];
+        for (let j = 0; j <= nY; j++) {
+            const x = this._boundsX[j];
+            positions.push(x, y0, zTop, x, y1, zTop);
+        }
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        const mat = new THREE.LineBasicMaterial({
+            color: 0x8be9fd, transparent: true, opacity: 0.4, depthTest: false,
+        });
+        const lines = new THREE.LineSegments(geom, mat);
+        lines.renderOrder = 996; // под выделением (998) и hover (999)
+        return lines;
+    }
+
+    _disposeLayerGrid() {
+        if (this._layerGridMesh) {
+            this.scene.remove(this._layerGridMesh);
+            this._layerGridMesh.geometry.dispose();
+            this._layerGridMesh.material.dispose();
+            this._layerGridMesh = null;
+        }
+    }
+
     // Возвращает список доступных палитр (для заполнения <select> в UI).
     static getColormapNames() {
         return [...COLORMAP_NAMES];
     }
+
+    // ================================================================
+    // === РЕДАКТИРОВАНИЕ ЯЧЕЕК (априорная информация) ================
+    // ================================================================
+
+    // Включает режим редактирования: пик ячеек лучом, кисть/выделение.
+    // options: {
+    //   defaultRho: число — фоновое сопротивление (для "сбросить всё"),
+    //   brushRho: начальное значение кисти,
+    //   onCellsEdited(indices, rho) — после применения ρ к ячейкам,
+    //   onHoverCell(info|null) — наведение на ячейку,
+    //   onSelectionChanged(count) — изменение выделения
+    // }
+    enableEditing(options = {}) {
+        if (!this.modelMesh || !this.modelData) {
+            throw new Error('enableEditing: сцена не инициализирована');
+        }
+        this.editing = true;
+        this._editOptions = options;
+        this.brushRho = (options.brushRho > 0) ? options.brushRho : (options.defaultRho > 0 ? options.defaultRho : 100);
+        this.selection = new Set();
+        this._strokeCells = null;
+        this._hoverIdx = -1;
+        this._raycaster = new THREE.Raycaster();
+        this._ndcVec = new THREE.Vector2();
+
+        // Подсветка ячейки под курсором — белый контур
+        const hoverGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+        const hoverMat = new THREE.LineBasicMaterial({
+            color: 0xffffff, depthTest: false, transparent: true, opacity: 0.9,
+        });
+        this._hoverBox = new THREE.LineSegments(hoverGeo, hoverMat);
+        this._hoverBox.visible = false;
+        this._hoverBox.renderOrder = 999;
+        this.scene.add(this._hoverBox);
+
+        // Подсветка выбранных ячеек — ядовито-пурпурные контуры (единая геометрия).
+        // Magenta (0xff00ff) отсутствует в палитре jet (blue→cyan→green→yellow→red),
+        // поэтому выделение контрастно на фоне ячеек любого сопротивления.
+        this._selectionLines = new THREE.LineSegments(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({
+                color: 0xff00ff, depthTest: false, transparent: true, opacity: 1.0,
+            })
+        );
+        this._selectionLines.renderOrder = 998;
+        this._selectionLines.frustumCulled = false;
+        this.scene.add(this._selectionLines);
+
+        // Обработчики указателя.
+        // ВАЖНО: pointerdown вешаем на РОДИТЕЛЬСКИЙ контейнер в capture-фазе —
+        // он срабатывает раньше обработчика OrbitControls (тот висит на canvas),
+        // и stopPropagation() не даёт камере вращаться при клике по ячейке.
+        const el = this.renderer.domElement;
+        const downEl = el.parentElement || el;
+        const handlers = {
+            move: (e) => this._onEditPointerMove(e),
+            down: (e) => this._onEditPointerDown(e),
+            up: (e) => this._onEditPointerUp(e),
+            leave: () => this._setHoverCell(-1),
+        };
+        el.addEventListener('pointermove', handlers.move);
+        el.addEventListener('pointerleave', handlers.leave);
+        downEl.addEventListener('pointerdown', handlers.down, true);
+        window.addEventListener('pointerup', handlers.up);
+        this._editHandlers = { el, downEl, ...handlers };
+
+        el.style.cursor = 'crosshair';
+        console.log('[RESULT VIEWER] Editing enabled');
+    }
+
+    // Полностью выключает режим редактирования
+    disableEditing() {
+        if (!this.editing) return;
+        this.editing = false;
+        if (this._editHandlers) {
+            const { el, downEl, move, down, up, leave } = this._editHandlers;
+            el.removeEventListener('pointermove', move);
+            el.removeEventListener('pointerleave', leave);
+            downEl.removeEventListener('pointerdown', down, true);
+            window.removeEventListener('pointerup', up);
+            el.style.cursor = '';
+            this._editHandlers = null;
+        }
+        if (this._hoverBox) {
+            this.scene.remove(this._hoverBox);
+            this._hoverBox.geometry.dispose();
+            this._hoverBox.material.dispose();
+            this._hoverBox = null;
+        }
+        if (this._selectionLines) {
+            this.scene.remove(this._selectionLines);
+            this._selectionLines.geometry.dispose();
+            this._selectionLines.material.dispose();
+            this._selectionLines = null;
+        }
+        this.selection.clear();
+        this._strokeCells = null;
+    }
+
+    setEditMode(mode) {
+        this.editMode = (mode === 'select') ? 'select' : 'paint';
+    }
+
+    setBrushRho(rho) {
+        if (isFinite(rho) && rho > 0) this.brushRho = rho;
+    }
+
+    setColumnMode(on) {
+        this.columnMode = !!on;
+    }
+
+    // --- Пик ячейки лучом: аналитический DDA-обход регулярной сетки ---
+    // (Raycaster по InstancedMesh из ~100k экземпляров был бы слишком медленным
+    // для hover, поэтому луч шагает прямо по ячейкам сетки.)
+    _ndcFromEvent(e) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this._ndcVec.set(
+            ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            -((e.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        return this._ndcVec;
+    }
+
+    _pickCellFromEvent(e) {
+        if (!this._boundsX || !this.modelMesh) return -1;
+        this._raycaster.setFromCamera(this._ndcFromEvent(e), this.camera);
+        return this._pickCellByRay(this._raycaster.ray);
+    }
+
+    _pickCellByRay(ray) {
+        const BX = this._boundsX, BY = this._boundsY, BZ = this._boundsZ;
+        const { nX, nY, nZ } = this.modelData;
+        const o = ray.origin, d = ray.direction;
+
+        // Пересечение луча с общим боксом сетки (slab-метод)
+        let tEnter = -Infinity, tExit = Infinity;
+        const slab = (op, dp, lo, hi) => {
+            if (Math.abs(dp) < 1e-14) {
+                return (op >= lo && op <= hi) ? [-Infinity, Infinity] : null;
+            }
+            let t1 = (lo - op) / dp, t2 = (hi - op) / dp;
+            if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; }
+            return [t1, t2];
+        };
+        for (const [op, dp, lo, hi] of [
+            [o.x, d.x, BX[0], BX[BX.length - 1]],
+            [o.y, d.y, BY[0], BY[BY.length - 1]],
+            [o.z, d.z, BZ[0], BZ[BZ.length - 1]],
+        ]) {
+            const s = slab(op, dp, lo, hi);
+            if (!s) return -1;
+            if (s[0] > tEnter) tEnter = s[0];
+            if (s[1] < tExit) tExit = s[1];
+        }
+        if (tEnter > tExit) return -1;
+        if (tEnter < 0) tEnter = 0; // камера внутри сетки
+
+        // Точка входа и стартовая ячейка (бинарный поиск по границам)
+        const px = o.x + d.x * tEnter;
+        const py = o.y + d.y * tEnter;
+        const pz = o.z + d.z * tEnter;
+        const findCell = (B, p, n) => {
+            let lo = 0, hi = n - 1;
+            while (lo < hi) {
+                const mid = (lo + hi + 1) >> 1;
+                if (B[mid] <= p) lo = mid; else hi = mid - 1;
+            }
+            return lo;
+        };
+        let cx = findCell(BX, px, nY);   // scene X -> model j
+        let cy = findCell(BY, py, nX);   // scene Y -> model i
+        let cz = findCell(BZ, pz, nZ);   // scene Z -> model k = nZ-1-cz
+
+        const stepX = d.x > 0 ? 1 : (d.x < 0 ? -1 : 0);
+        const stepY = d.y > 0 ? 1 : (d.y < 0 ? -1 : 0);
+        const stepZ = d.z > 0 ? 1 : (d.z < 0 ? -1 : 0);
+
+        // t выхода за следующую границу по каждой оси (абсолютный параметр луча)
+        const nextT = (B, c, step, op, dp) => {
+            if (step === 0) return Infinity;
+            const b = step > 0 ? B[c + 1] : B[c];
+            return (b - op) / dp;
+        };
+        let tX = nextT(BX, cx, stepX, o.x, d.x);
+        let tY = nextT(BY, cy, stepY, o.y, d.y);
+        let tZ = nextT(BZ, cz, stepZ, o.z, d.z);
+
+        const maxSteps = nX + nY + nZ + 8;
+        for (let s = 0; s < maxSteps; s++) {
+            const k = nZ - 1 - cz;
+            const idx = k * nX * nY + cx * nX + cy; // j=cx (Y), i=cy (X)
+            if (this._isCellPickable(idx)) return idx;
+
+            // Шаг в соседнюю ячейку через ближайшую границу
+            if (tX <= tY && tX <= tZ) {
+                if (tX > tExit) break;
+                cx += stepX;
+                if (cx < 0 || cx >= nY) break;
+                tX = nextT(BX, cx, stepX, o.x, d.x);
+            } else if (tY <= tZ) {
+                if (tY > tExit) break;
+                cy += stepY;
+                if (cy < 0 || cy >= nX) break;
+                tY = nextT(BY, cy, stepY, o.y, d.y);
+            } else {
+                if (tZ > tExit) break;
+                cz += stepZ;
+                if (cz < 0 || cz >= nZ) break;
+                tZ = nextT(BZ, cz, stepZ, o.z, d.z);
+            }
+        }
+        return -1;
+    }
+
+    // Видима ли ячейка сейчас (не скрыта cutoff-диапазоном) — только такие можно выбирать
+    _isCellPickable(idx) {
+        if (!this._valid[idx]) return false;
+        // При активном layer-фильтре ячейки других слоёв некликабельны —
+        // луч проходит сквозь них к видимому слою
+        if (this.layerFilter != null && this._nXY > 0 &&
+            ((idx / this._nXY) | 0) !== this.layerFilter) {
+            return false;
+        }
+        const logR = this._logRho[idx];
+        const logMin = Math.log10(this.settings.minRho);
+        const logMax = Math.log10(this.settings.maxRho);
+        return logR >= logMin && logR <= logMax;
+    }
+
+    // Все ячейки вертикальной колонки (все Z) для данного плоского индекса
+    _columnIndices(idx) {
+        const { nX, nY, nZ } = this.modelData;
+        const rem = idx % (nX * nY);
+        const out = [];
+        for (let k = 0; k < nZ; k++) out.push(k * nX * nY + rem);
+        return out;
+    }
+
+    // Информация о ячейке для UI: индексы, глубина, текущее ρ
+    getCellInfo(idx) {
+        if (idx < 0 || !this.modelData) return null;
+        const { nX, nY, nZ, rhoValues } = this.modelData;
+        const k = Math.floor(idx / (nX * nY));
+        const rem = idx % (nX * nY);
+        const j = Math.floor(rem / nX);
+        const i = rem % nX;
+        const zCum = this._zCum;
+        return {
+            idx,
+            ix: i, iy: j, iz: k,
+            depthTop: zCum ? zCum[k] : 0,
+            depthBottom: zCum ? zCum[k + 1] : 0,
+            rho: rhoValues[idx],
+            nX, nY, nZ,
+        };
+    }
+
+    // --- Подсветка ---
+    _setHoverCell(idx) {
+        if (idx === this._hoverIdx) return;
+        this._hoverIdx = idx;
+        if (idx < 0 || !this._hoverBox) {
+            if (this._hoverBox) this._hoverBox.visible = false;
+            if (this._editOptions.onHoverCell) this._editOptions.onHoverCell(null);
+            return;
+        }
+        const off3 = idx * 3;
+        this._hoverBox.scale.set(
+            this._cellSizes[off3] * 1.005,
+            this._cellSizes[off3 + 1] * 1.005,
+            this._cellSizes[off3 + 2] * 1.005
+        );
+        this._hoverBox.position.set(
+            this._cellCenters[off3],
+            this._cellCenters[off3 + 1],
+            this._cellCenters[off3 + 2]
+        );
+        this._hoverBox.visible = true;
+        if (this._editOptions.onHoverCell) {
+            this._editOptions.onHoverCell(this.getCellInfo(idx));
+        }
+    }
+
+    _updateSelectionHighlight() {
+        if (!this._selectionLines) return;
+        const verts = [];
+        for (const idx of this.selection) {
+            const off3 = idx * 3;
+            const cx = this._cellCenters[off3], cy = this._cellCenters[off3 + 1], cz = this._cellCenters[off3 + 2];
+            // Контур чуть крупнее ячейки (1.03) — заметен на фоне соседей
+            const hx = this._cellSizes[off3] / 2 * 1.03;
+            const hy = this._cellSizes[off3 + 1] / 2 * 1.03;
+            const hz = this._cellSizes[off3 + 2] / 2 * 1.03;
+            const x1 = cx - hx, x2 = cx + hx;
+            const y1 = cy - hy, y2 = cy + hy;
+            const z1 = cz - hz, z2 = cz + hz;
+            // 12 рёбер бокса
+            const p = [
+                [[x1,y1,z1],[x2,y1,z1]], [[x2,y1,z1],[x2,y2,z1]],
+                [[x2,y2,z1],[x1,y2,z1]], [[x1,y2,z1],[x1,y1,z1]],
+                [[x1,y1,z2],[x2,y1,z2]], [[x2,y1,z2],[x2,y2,z2]],
+                [[x2,y2,z2],[x1,y2,z2]], [[x1,y2,z2],[x1,y1,z2]],
+                [[x1,y1,z1],[x1,y1,z2]], [[x2,y1,z1],[x2,y1,z2]],
+                [[x2,y2,z1],[x2,y2,z2]], [[x1,y2,z1],[x1,y2,z2]],
+            ];
+            for (const [a, b] of p) verts.push(...a, ...b);
+        }
+        this._selectionLines.geometry.dispose();
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        this._selectionLines.geometry = geo;
+        if (this._editOptions.onSelectionChanged) {
+            this._editOptions.onSelectionChanged(this.selection.size);
+        }
+    }
+
+    // --- Обработчики указателя ---
+    _onEditPointerMove(e) {
+        // hover — с троттлингом на requestAnimationFrame
+        this._lastMoveEvent = e;
+        if (this._hoverRafPending) return;
+        this._hoverRafPending = true;
+        requestAnimationFrame(() => {
+            this._hoverRafPending = false;
+            if (!this.editing || !this._lastMoveEvent) return;
+            const idx = this._pickCellFromEvent(this._lastMoveEvent);
+            this._setHoverCell(idx);
+            // Продолжение кистевого мазка
+            if (this._strokeCells && idx >= 0) {
+                this._paintCells(this.columnMode ? this._columnIndices(idx) : [idx]);
+            }
+        });
+    }
+
+    _onEditPointerDown(e) {
+        if (e.button !== 0 || !this.editing) return;
+        const idx = this._pickCellFromEvent(e);
+        if (idx < 0) {
+            // Мимо сетки: в режиме выделения без модификаторов — снять выделение
+            if (this.editMode === 'select' && !e.ctrlKey && !e.metaKey && !e.shiftKey
+                && this.selection.size > 0) {
+                this.clearSelection();
+            }
+            return;
+        }
+
+        if (this.editMode === 'paint') {
+            if (!(this.brushRho > 0)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            // Отключаем орбит-контролы на время мазка, чтобы камера не вращалась
+            if (this.controls) this.controls.enabled = false;
+            this._strokeCells = new Set();
+            this._strokeRho = this.brushRho;
+            this._paintCells(this.columnMode ? this._columnIndices(idx) : [idx]);
+        } else {
+            // Режим выделения
+            e.preventDefault();
+            e.stopPropagation();
+            const targets = this.columnMode ? this._columnIndices(idx) : [idx];
+            const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+            const allSelected = targets.every(t => this.selection.has(t));
+            if (additive) {
+                if (allSelected) targets.forEach(t => this.selection.delete(t));
+                else targets.forEach(t => this.selection.add(t));
+            } else if (allSelected && this.selection.size === targets.length) {
+                this.selection.clear();
+            } else {
+                this.selection.clear();
+                targets.forEach(t => this.selection.add(t));
+            }
+            this._updateSelectionHighlight();
+        }
+    }
+
+    _onEditPointerUp() {
+        if (this._strokeCells) {
+            const painted = this._strokeCells;
+            this._strokeCells = null;
+            if (this.controls) this.controls.enabled = true;
+            if (painted.size > 0) {
+                this._rebuildAllInstances();       // согласованные цвета в новом диапазоне
+                this._updateColorScaleLegend();
+                if (this._editOptions.onCellsEdited) {
+                    this._editOptions.onCellsEdited([...painted], this._strokeRho);
+                }
+            }
+        }
+    }
+
+    // Применяет brushRho к ячейкам (визуально + в modelData) во время мазка
+    _paintCells(indices) {
+        const rho = this._strokeCells ? this._strokeRho : this.brushRho;
+        if (!(rho > 0)) return;
+        this._ensureRangeIncludes(rho);
+        const fresh = [];
+        for (const idx of indices) {
+            if (this._strokeCells && this._strokeCells.has(idx)) continue;
+            fresh.push(idx);
+            if (this._strokeCells) this._strokeCells.add(idx);
+        }
+        if (fresh.length === 0) return;
+        this._setCellsRhoVisual(fresh, rho);
+    }
+
+    // Запись ρ в modelData + точечное обновление инстансов
+    _setCellsRhoVisual(indices, rho) {
+        const { rhoValues } = this.modelData;
+        const logR = Math.log10(rho);
+        for (const idx of indices) {
+            rhoValues[idx] = rho;
+            this._logRho[idx] = logR;
+            this._valid[idx] = 1;
+            this._updateInstance(idx);
+        }
+    }
+
+    // Расширяет видимый диапазон и границы данных, чтобы новая ρ не "пропала"
+    _ensureRangeIncludes(rho) {
+        let rangeChanged = false;
+        if (rho < this.colorScale.dataMin) this.colorScale.dataMin = rho;
+        if (rho > this.colorScale.dataMax) this.colorScale.dataMax = rho;
+        if (rho < this.settings.minRho) {
+            this.settings.minRho = rho;
+            this.colorScale.minRho = rho;
+            rangeChanged = true;
+        }
+        if (rho > this.settings.maxRho) {
+            this.settings.maxRho = rho;
+            this.colorScale.maxRho = rho;
+            rangeChanged = true;
+        }
+        if (rangeChanged) this._rebuildAllInstances();
+    }
+
+    // --- Публичное API панели редактирования ---
+
+    // Применить ρ ко всем выбранным ячейкам. Возвращает число ячеек.
+    applyRhoToSelection(rho) {
+        if (!this.editing || this.selection.size === 0) return 0;
+        if (!(rho > 0) || !isFinite(rho)) return 0;
+        const indices = [...this.selection];
+        this._ensureRangeIncludes(rho);
+        this._setCellsRhoVisual(indices, rho);
+        this._rebuildAllInstances();
+        this._updateColorScaleLegend();
+        if (this._editOptions.onCellsEdited) this._editOptions.onCellsEdited(indices, rho);
+        return indices.length;
+    }
+
+    clearSelection() {
+        this.selection.clear();
+        this._updateSelectionHighlight();
+    }
+
+    // Сбросить ВСЕ изменённые ячейки к фоновому ρ. Возвращает число сброшенных.
+    resetAllCells() {
+        const def = this._editOptions.defaultRho;
+        if (!(def > 0)) return 0;
+        const { rhoValues } = this.modelData;
+        const changed = [];
+        for (let i = 0; i < rhoValues.length; i++) {
+            if (rhoValues[i] !== def) changed.push(i);
+        }
+        if (changed.length === 0) return 0;
+        this._setCellsRhoVisual(changed, def);
+        this._rebuildAllInstances();
+        this._updateColorScaleLegend();
+        if (this._editOptions.onCellsEdited) this._editOptions.onCellsEdited(changed, def);
+        return changed.length;
+    }
+
+    // ================================================================
 
     // === Wireframe-оверлей ===
     // Строит контурную сетку, как в предыдущей версии, но отдельным объектом.
@@ -551,6 +1140,8 @@ export class ResultViewer {
     }
 
     dispose() {
+        // Выключаем редактирование (снимает обработчики и удаляет подсветку)
+        this.disableEditing();
         if (this.renderer) this.renderer.dispose();
         if (this.controls) this.controls.dispose();
         if (this.modelMesh) {
@@ -561,6 +1152,8 @@ export class ResultViewer {
             this.wireframeMesh.geometry.dispose();
             this.wireframeMesh.material.dispose();
         }
+        this._disposeLayerGrid();
+        this.layerFilter = null;
         if (this._legendEl && this._legendEl.parentNode) {
             this._legendEl.parentNode.removeChild(this._legendEl);
         }
@@ -569,6 +1162,10 @@ export class ResultViewer {
         this._cellSizes = null;
         this._logRho = null;
         this._valid = null;
+        this._boundsX = null;
+        this._boundsY = null;
+        this._boundsZ = null;
+        this._zCum = null;
         this.modelMesh = null;
         this.wireframeMesh = null;
         if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler);
@@ -591,9 +1188,19 @@ function formatRho(v) {
 // тот же модальный шаблон, легенда, статистика и OrbitControls.
 // modelData — объект формата { nX, nY, nZ, xCells, yCells, zCells, rhoValues }
 // (см. buildSimpegModelData в simpegProfilesConverter.js).
+//
+// options.editing (опционально) включает режим правки сопротивлений ячеек:
+// {
+//   defaultRho: фоновое ρ (для сброса),
+//   onCellsEdited(indices, rho): вызывается после правки ячеек,
+//   getModifiedCount(): сколько ячеек отличается от фона — для счётчика в панели
+// }
 let _volumeViewerInstance = null;
 
-export function showVolumeModal(modelData, title = 'Объёмная модель') {
+export function showVolumeModal(modelData, title = 'Объёмная модель', options = {}) {
+    const editing = options.editing || null;
+    const defaultRho = editing && editing.defaultRho > 0 ? editing.defaultRho : 100;
+
     const modal = document.createElement('div');
     modal.className = 'file-viewer-modal result-viewer-modal-large';
     modal.innerHTML = `
@@ -603,7 +1210,55 @@ export function showVolumeModal(modelData, title = 'Объёмная модел�
                 <button class="file-viewer-close">&times;</button>
             </div>
             <div class="file-viewer-body">
-                <div class="volume-3d-container" style="width: 100%; height: 70vh; position: relative;"></div>
+                <div class="volume-3d-container" style="width: 100%; height: ${editing ? '55vh' : '70vh'}; position: relative;"></div>
+                ${editing ? `
+                <div class="volume-edit-toolbar" id="volume-edit-toolbar">
+                    <div class="edit-row">
+                        <span class="edit-group-label">✏️ Априорная информация</span>
+                        <label class="edit-radio"><input type="radio" name="volume-edit-mode" value="paint" checked> 🖌 Кисть</label>
+                        <label class="edit-radio"><input type="radio" name="volume-edit-mode" value="select"> ☑ Выделение</label>
+                        <span class="edit-sep"></span>
+                        <label class="edit-field">ρ =
+                            <input type="number" id="volume-edit-rho" min="0.01" step="any" value="${defaultRho}">
+                            <span class="edit-unit">Ом·м</span>
+                        </label>
+                        <label class="edit-check"><input type="checkbox" id="volume-edit-column"> вся колонка Z</label>
+                    </div>
+                    <div class="edit-row">
+                        <span class="edit-group-label">🗂 Слой Z</span>
+                        <label class="edit-check" title="Показывать и редактировать только выбранный слой; остальные скрыты и некликабельны"><input type="checkbox" id="volume-edit-layer-on"> только этот слой</label>
+                        <input type="range" class="edit-layer-slider" id="volume-edit-layer" min="0" max="${Math.max(0, modelData.nZ - 1)}" step="1" value="0" title="Номер слоя: 0 — верхний (у поверхности)">
+                        <span class="edit-layer-info" id="volume-edit-layer-info">—</span>
+                        <span class="edit-sep"></span>
+                        <label class="edit-check" title="Линии границ ячеек всей модели"><input type="checkbox" id="volume-edit-grid"> показать сетку</label>
+                    </div>
+                    <div class="edit-row">
+                        <span class="edit-group-label" title="Показывать только ячейки с ρ в выбранном диапазоне; скрытые ячейки не кликабельны">🔍 Фильтр ρ</span>
+                        <div class="edit-range-wrap">
+                            <div class="edit-range-labels">
+                                <span id="volume-edit-range-min-label">—</span>
+                                <span class="edit-range-hint" id="volume-edit-range-hint">—</span>
+                                <span id="volume-edit-range-max-label">—</span>
+                            </div>
+                            <div class="range-slider">
+                                <div class="range-track"></div>
+                                <div class="range-fill" id="volume-edit-range-fill"></div>
+                                <input type="range" class="range-input range-min" id="volume-edit-range-min" min="0" max="10000" step="1" value="0" />
+                                <input type="range" class="range-input range-max" id="volume-edit-range-max" min="0" max="10000" step="1" value="10000" />
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-secondary" id="volume-edit-range-reset" title="Показать ячейки всего диапазона сопротивлений">Весь диапазон</button>
+                    </div>
+                    <div class="edit-row">
+                        <button type="button" class="btn btn-sm" id="volume-edit-apply" disabled>Применить к выделенным</button>
+                        <button type="button" class="btn btn-sm btn-secondary" id="volume-edit-clear">Снять выделение</button>
+                        <button type="button" class="btn btn-sm btn-danger-ghost" id="volume-edit-reset">↺ Сбросить все изменения</button>
+                        <span class="edit-counter" id="volume-edit-count">Изменено ячеек: 0</span>
+                    </div>
+                    <div class="edit-row edit-hover-row" id="volume-edit-hover">
+                        Наведите курсор на ячейку…
+                    </div>
+                </div>` : ''}
                 <div class="volume-stats" style="margin-top: 16px; padding: 12px; background: var(--color-bg-secondary); border-radius: var(--radius-md);"></div>
             </div>
         </div>
@@ -621,6 +1276,203 @@ export function showVolumeModal(modelData, title = 'Объёмная модел�
 
         _volumeViewerInstance = new ResultViewer();
         _volumeViewerInstance.init3DVisualization(container, modelData);
+
+        // === Панель редактирования ===
+        if (editing) {
+            const viewer = _volumeViewerInstance;
+            const rhoInput = modal.querySelector('#volume-edit-rho');
+            const countEl = modal.querySelector('#volume-edit-count');
+            const hoverEl = modal.querySelector('#volume-edit-hover');
+            const applyBtn = modal.querySelector('#volume-edit-apply');
+
+            const updateCount = () => {
+                const n = editing.getModifiedCount ? editing.getModifiedCount() : 0;
+                countEl.textContent = `Изменено ячеек: ${n.toLocaleString('ru-RU')}`;
+                countEl.classList.toggle('has-edits', n > 0);
+            };
+
+            viewer.enableEditing({
+                defaultRho,
+                brushRho: parseFloat(rhoInput.value) || defaultRho,
+                onCellsEdited: (indices, rho) => {
+                    if (editing.onCellsEdited) {
+                        try {
+                            editing.onCellsEdited(indices, rho);
+                        } catch (err) {
+                            console.error('[VOLUME EDIT] onCellsEdited failed:', err);
+                        }
+                    }
+                    updateCount();
+                    // Правка могла расширить диапазон данных (_ensureRangeIncludes) —
+                    // пересинхронизируем фильтр-слайдер с новыми границами
+                    if (typeof syncRangeUI === 'function') syncRangeUI();
+                },
+                onHoverCell: (info) => {
+                    if (!info) {
+                        hoverEl.textContent = 'Наведите курсор на ячейку…';
+                        return;
+                    }
+                    const dTop = Math.round(info.depthTop).toLocaleString('ru-RU');
+                    const dBot = Math.round(info.depthBottom).toLocaleString('ru-RU');
+                    hoverEl.textContent =
+                        `Ячейка [X:${info.ix}, Y:${info.iy}, Z:${info.iz}] · ` +
+                        `глубина ${dTop}–${dBot} м · ρ = ${formatRho(info.rho)} Ом·м`;
+                },
+                onSelectionChanged: (n) => {
+                    applyBtn.disabled = n === 0;
+                    applyBtn.textContent = n > 0
+                        ? `Применить к выделенным (${n.toLocaleString('ru-RU')})`
+                        : 'Применить к выделенным';
+                },
+            });
+
+            // Режим: кисть / выделение
+            modal.querySelectorAll('input[name="volume-edit-mode"]').forEach(radio => {
+                radio.addEventListener('change', () => {
+                    if (radio.checked) viewer.setEditMode(radio.value);
+                });
+            });
+
+            // Значение кисти
+            rhoInput.addEventListener('input', () => {
+                viewer.setBrushRho(parseFloat(rhoInput.value));
+            });
+
+            // Режим колонки
+            modal.querySelector('#volume-edit-column').addEventListener('change', (e) => {
+                viewer.setColumnMode(e.target.checked);
+            });
+
+            // === Выбор Z-слоя: изоляция + точная правка одного среза ===
+            const layerSlider = modal.querySelector('#volume-edit-layer');
+            const layerOn = modal.querySelector('#volume-edit-layer-on');
+            const layerInfo = modal.querySelector('#volume-edit-layer-info');
+            const fmtM = (v) => Math.round(v).toLocaleString('ru-RU');
+            const updateLayerInfo = () => {
+                const k = parseInt(layerSlider.value, 10);
+                const dr = viewer.getLayerDepthRange(k);
+                layerInfo.innerHTML = dr
+                    ? `<strong>${k + 1}</strong> / ${modelData.nZ} · глубина ${fmtM(dr.top)}–${fmtM(dr.bottom)} м`
+                    : '—';
+            };
+            let layerRaf = 0;
+            layerSlider.addEventListener('input', () => {
+                updateLayerInfo();
+                if (!layerOn.checked) return;
+                // Перестройка 100k+ инстансов недешёвая — не чаще кадра
+                if (layerRaf) return;
+                layerRaf = requestAnimationFrame(() => {
+                    layerRaf = 0;
+                    viewer.setLayerFilter(parseInt(layerSlider.value, 10));
+                });
+            });
+            layerOn.addEventListener('change', () => {
+                viewer.setLayerFilter(layerOn.checked ? parseInt(layerSlider.value, 10) : null);
+            });
+            updateLayerInfo();
+
+            // Сетка границ ячеек всего объёма
+            modal.querySelector('#volume-edit-grid').addEventListener('change', (e) => {
+                viewer.setWireframe(e.target.checked);
+            });
+
+            // === Фильтр сопротивлений (dual range-slider, лог-шкала) ===
+            // Тот же компонент, что в панели VTR-вьюера: внутренние значения
+            // [0..10000] маппятся в [log10(lo), log10(hi)] текущего диапазона данных.
+            const rMinInput = modal.querySelector('#volume-edit-range-min');
+            const rMaxInput = modal.querySelector('#volume-edit-range-max');
+            const rFill = modal.querySelector('#volume-edit-range-fill');
+            const rMinLabel = modal.querySelector('#volume-edit-range-min-label');
+            const rMaxLabel = modal.querySelector('#volume-edit-range-max-label');
+            const rHint = modal.querySelector('#volume-edit-range-hint');
+
+            // Границы лог-шкалы. ВАЖНО: свежая coarse-сетка однородна
+            // (все ρ = defaultRho → dataMin == dataMax), поэтому вырожденный
+            // диапазон расширяем по декаде в обе стороны.
+            const rangeBounds = () => {
+                let lo = viewer.colorScale.dataMin;
+                let hi = viewer.colorScale.dataMax;
+                if (!(hi > lo)) { lo = lo / 10; hi = hi * 10; }
+                return [Math.log10(lo), Math.log10(hi)];
+            };
+
+            const applyRangeFromSlider = () => {
+                const [logLo, logHi] = rangeBounds();
+                const span = (logHi - logLo) || 1;
+                let vMin = parseInt(rMinInput.value, 10);
+                let vMax = parseInt(rMaxInput.value, 10);
+                if (vMin > vMax) [vMin, vMax] = [vMax, vMin]; // не даём меняться местами
+                const minRho = Math.pow(10, logLo + (vMin / 10000) * span);
+                const maxRho = Math.pow(10, logLo + (vMax / 10000) * span);
+                if (maxRho > minRho) viewer.setRange(minRho, maxRho);
+                rFill.style.left = `${vMin / 100}%`;
+                rFill.style.width = `${(vMax - vMin) / 100}%`;
+                rMinLabel.textContent = formatRho(minRho);
+                rMaxLabel.textContent = formatRho(maxRho);
+                rHint.textContent = `${formatRho(minRho)} … ${formatRho(maxRho)} Ω·м`;
+            };
+
+            // Синхронизация ползунков с текущим состоянием viewer
+            // (после правок _ensureRangeIncludes может расширить границы данных)
+            const syncRangeUI = () => {
+                const [logLo, logHi] = rangeBounds();
+                const span = (logHi - logLo) || 1;
+                const toSlider = (rho) => Math.max(0, Math.min(10000,
+                    Math.round(((Math.log10(rho) - logLo) / span) * 10000)));
+                let vMin = toSlider(viewer.settings.minRho);
+                let vMax = toSlider(viewer.settings.maxRho);
+                if (vMin > vMax) [vMin, vMax] = [vMax, vMin];
+                rMinInput.value = vMin;
+                rMaxInput.value = vMax;
+                applyRangeFromSlider();
+            };
+
+            const showFullRange = () => {
+                const [logLo, logHi] = rangeBounds();
+                const lo = Math.pow(10, logLo);
+                const hi = Math.pow(10, logHi);
+                if (hi > lo) viewer.setRange(lo, hi);
+                syncRangeUI();
+            };
+
+            // Перестройка 100k+ инстансов на каждое input-событие тяжела — rAF-троттлинг
+            let rangeRaf = 0;
+            const onRangeInput = () => {
+                if (rangeRaf) return;
+                rangeRaf = requestAnimationFrame(() => {
+                    rangeRaf = 0;
+                    applyRangeFromSlider();
+                });
+            };
+            rMinInput.addEventListener('input', onRangeInput);
+            rMaxInput.addEventListener('input', onRangeInput);
+            modal.querySelector('#volume-edit-range-reset').addEventListener('click', showFullRange);
+
+            showFullRange(); // стартовое состояние — виден весь диапазон
+
+            // Применить к выделенным
+            applyBtn.addEventListener('click', () => {
+                const rho = parseFloat(rhoInput.value);
+                if (!(rho > 0) || !isFinite(rho)) {
+                    alert('Введите корректное положительное сопротивление');
+                    return;
+                }
+                viewer.applyRhoToSelection(rho);
+            });
+
+            // Снять выделение
+            modal.querySelector('#volume-edit-clear').addEventListener('click', () => {
+                viewer.clearSelection();
+            });
+
+            // Сбросить все изменения
+            modal.querySelector('#volume-edit-reset').addEventListener('click', () => {
+                const n = viewer.resetAllCells();
+                if (n > 0) updateCount();
+            });
+
+            updateCount();
+        }
 
         const totalCells = modelData.nX * modelData.nY * modelData.nZ;
         const xExtent = modelData.xCells.reduce((a, b) => a + b, 0);
@@ -642,11 +1494,11 @@ export function showVolumeModal(modelData, title = 'Объёмная модел�
                 </div>
                 <div>
                     <div style="color: var(--color-text-tertiary);">Область (X × Y)</div>
-                    <div style="color: var(--color-primary); font-weight: 600;">${(xExtent / 1000).toFixed(1)} × ${(yExtent / 1000).toFixed(1)} км</div>
+                    <div style="color: var(--color-primary); font-weight: 600;">${Math.round(xExtent).toLocaleString('ru-RU')} × ${Math.round(yExtent).toLocaleString('ru-RU')} м</div>
                 </div>
                 <div>
                     <div style="color: var(--color-text-tertiary);">Глубина</div>
-                    <div style="color: var(--color-primary); font-weight: 600;">${(zExtent / 1000).toFixed(1)} км</div>
+                    <div style="color: var(--color-primary); font-weight: 600;">${Math.round(zExtent).toLocaleString('ru-RU')} м</div>
                 </div>
                 <div>
                     <div style="color: var(--color-text-tertiary);">Диапазон ρ</div>
@@ -654,7 +1506,12 @@ export function showVolumeModal(modelData, title = 'Объёмная модел�
                 </div>
             </div>
             <div style="margin-top: 12px; color: var(--color-text-tertiary); font-size: 0.85em;">
-                💡 Используйте мышь для вращения, масштабирования и панорамирования модели
+                ${editing
+                    ? '💡 <strong>Кисть</strong>: зажмите левую кнопку и ведите по ячейкам — ρ применяется сразу. ' +
+                      '<strong>Выделение</strong>: клик по ячейке, Ctrl/Shift+клик — добавить; затем «Применить к выделенным» (пурпурный контур). ' +
+                      '<strong>Слой Z</strong>: включите «только этот слой» — остальные слои скроются, правки попадут строго в выбранный срез. ' +
+                      '<strong>Сетка</strong> — линии границ ячеек. Колесо — масштаб, правая кнопка — панорама.'
+                    : '💡 Используйте мышь для вращения, масштабирования и панорамирования модели'}
             </div>
         `;
     } catch (error) {

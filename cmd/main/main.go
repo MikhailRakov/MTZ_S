@@ -115,6 +115,13 @@ func main() {
 			case ".html":
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			}
+			// JS/CSS/HTML всегда должны проверяться на свежесть (иначе браузер
+			// может смешать старую и новую версии модулей после деплоя).
+			// no-cache = переиспользовать только после проверки (304 дёшев).
+			switch ext {
+			case ".js", ".css", ".html":
+				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			}
 			next.ServeHTTP(w, r)
 		})
 	}

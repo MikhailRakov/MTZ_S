@@ -1536,16 +1536,18 @@ textarea:focus {
 }
 
 /* === Settings Panel Layout (vtr viewer) === */
+/* Settings panel moved below the 3D view */
 .result-viewer-layout {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: 0;
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
+    overflow-y: auto;
 }
 
 .viewer-3d-wrap {
     position: relative;
+    flex: 1;
     min-height: 0;
     min-width: 0;
     background: #0a0a0f;
@@ -1554,7 +1556,7 @@ textarea:focus {
 .vtr-3d-container {
     width: 100%;
     height: 100%;
-    min-height: 65vh;
+    min-height: 50vh;
     position: relative;
 }
 
@@ -1564,6 +1566,7 @@ textarea:focus {
     padding: var(--spacing-md) var(--spacing-lg);
     background: var(--color-bg-secondary);
     border-top: 1px solid var(--color-border);
+    flex-shrink: 0;
 }
 
 .vtr-stats-grid {
@@ -1590,21 +1593,48 @@ textarea:focus {
     font-size: 0.85em;
 }
 
-/* === Settings Sidebar === */
+/* === Settings Panel (below 3D view) === */
 .viewer-settings-panel {
     background: var(--color-bg-secondary);
-    border-right: 1px solid var(--color-border);
-    padding: var(--spacing-md);
-    overflow-y: auto;
+    border-top: 1px solid var(--color-border);
+    padding: var(--spacing-md) var(--spacing-lg);
     display: flex;
-    flex-direction: column;
-    gap: var(--spacing-md);
+    flex-wrap: wrap;
+    gap: var(--spacing-md) var(--spacing-xl);
+    align-items: flex-start;
+    width: 100%;
+    box-sizing: border-box;
+    flex-shrink: 0;
 }
 
 .settings-section {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-xs);
+    flex: 1 1 220px;
+    min-width: 200px;
+    max-width: 380px;
+}
+
+/* Секция с dual-range слайдером — на ВСЮ ширину панели отдельным рядом:
+   длинный слайдер = точнее попадание в значение, без пропусков */
+.settings-section:has(.range-slider) {
+    flex: 1 1 100%;
+    max-width: none;
+}
+
+/* Компактные секции (переключатель, кнопка сброса) не растягиваем */
+.settings-section:has(.settings-toggle),
+.settings-section:has(.viewer-reset-btn) {
+    flex: 0 0 auto;
+    justify-content: center;
+}
+
+@media (max-width: 900px) {
+    .settings-section {
+        flex: 1 1 100%;
+        max-width: none;
+    }
 }
 
 .settings-label {
@@ -1644,11 +1674,11 @@ textarea:focus {
     outline: none;
 }
 
-/* Dual-thumb range slider (лог-шкала) */
+/* Dual-thumb range slider (лог-шкала) — увеличенный для точной фильтрации */
 .range-slider {
     position: relative;
-    height: 24px;
-    margin: 8px 0 4px;
+    height: 34px;
+    margin: 12px 4px 6px;
 }
 
 .range-track,
@@ -1656,8 +1686,8 @@ textarea:focus {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    height: 4px;
-    border-radius: 2px;
+    height: 8px;
+    border-radius: 4px;
     pointer-events: none;
 }
 
@@ -1676,7 +1706,7 @@ textarea:focus {
     top: 0;
     left: 0;
     width: 100%;
-    height: 24px;
+    height: 34px;
     margin: 0;
     background: transparent;
     -webkit-appearance: none;
@@ -1687,41 +1717,46 @@ textarea:focus {
 
 .range-input::-webkit-slider-runnable-track {
     background: transparent;
-    height: 4px;
+    height: 8px;
 }
 
 .range-input::-moz-range-track {
     background: transparent;
-    height: 4px;
+    height: 8px;
 }
 
 .range-input::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: var(--color-primary);
-    border: 2px solid var(--color-bg-secondary);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
-    cursor: pointer;
+    border: 3px solid var(--color-bg-secondary);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+    cursor: grab;
     pointer-events: auto;
-    margin-top: -6px;
+    margin-top: -8px;
+}
+
+.range-input::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.15);
 }
 
 .range-input::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: var(--color-primary);
-    border: 2px solid var(--color-bg-secondary);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
-    cursor: pointer;
+    border: 3px solid var(--color-bg-secondary);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+    cursor: grab;
     pointer-events: auto;
 }
 
 .range-input:focus::-webkit-slider-thumb {
-    box-shadow: 0 0 0 3px rgba(26, 159, 255, 0.3);
+    box-shadow: 0 0 0 4px rgba(26, 159, 255, 0.35);
 }
 
 .range-bounds {
@@ -1733,37 +1768,43 @@ textarea:focus {
     margin-top: 2px;
 }
 
-/* Opacity slider — обычный одноползунковый */
+/* Opacity slider — обычный одноползунковый, увеличенный */
 .opacity-slider {
     width: 100%;
     -webkit-appearance: none;
     appearance: none;
-    height: 4px;
-    border-radius: 2px;
+    height: 8px;
+    border-radius: 4px;
     background: var(--color-bg-tertiary);
     outline: none;
     cursor: pointer;
+    margin: 10px 0;
 }
 
 .opacity-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--color-primary);
-    border: 2px solid var(--color-bg-secondary);
-    cursor: pointer;
+    border: 3px solid var(--color-bg-secondary);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
+    cursor: grab;
+}
+
+.opacity-slider::-webkit-slider-thumb:active {
+    cursor: grabbing;
 }
 
 .opacity-slider::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--color-primary);
-    border: 2px solid var(--color-bg-secondary);
-    cursor: pointer;
-    border: none;
+    border: 3px solid var(--color-bg-secondary);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
+    cursor: grab;
 }
 
 /* Toggle switch */
@@ -1848,6 +1889,313 @@ textarea:focus {
 .legend-meta strong {
     color: var(--color-text-primary);
     text-transform: capitalize;
+}
+
+/* === Header Right Section === */
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+/* === Queue Stats Widget === */
+.queue-stats-widget {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-md);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    cursor: default;
+    user-select: none;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.queue-stats-widget:hover {
+    background: var(--color-bg-tertiary);
+    border-color: var(--color-border-light);
+}
+
+.queue-stats-icon {
+    font-size: 1.4em;
+    line-height: 1;
+    transition: transform 0.3s ease;
+}
+
+.queue-stats-widget.queue-online .queue-stats-icon {
+    animation: queuePulse 2s ease-in-out infinite;
+}
+
+@keyframes queuePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.queue-stats-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.queue-stats-label {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    line-height: 1.1;
+}
+
+.queue-stats-value {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--color-text-muted);
+    line-height: 1.1;
+}
+
+.queue-stats-widget.queue-online .queue-stats-value {
+    color: var(--color-success);
+}
+
+.queue-stats-widget.queue-offline .queue-stats-value {
+    color: var(--color-text-muted);
+}
+
+.queue-stats-widget.queue-error .queue-stats-value {
+    color: var(--color-danger);
+}
+
+.queue-stats-pending {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding-left: var(--spacing-sm);
+    border-left: 1px solid var(--color-border);
+}
+
+.queue-stats-pending-label {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+}
+
+.queue-stats-pending-value {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-warning);
+}
+
+/* Responsive: hide label on small screens */
+@media (max-width: 768px) {
+    .queue-stats-widget {
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+    .queue-stats-label {
+        display: none;
+    }
+    .queue-stats-pending {
+        display: none;
+    }
+}
+
+/* === Volume Editor Toolbar (правка ρ ячеек coarse-сетки) === */
+.volume-edit-toolbar {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.volume-edit-toolbar .edit-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+}
+
+.edit-group-label {
+    font-weight: 600;
+    font-size: var(--text-sm);
+    color: var(--color-primary);
+    margin-right: var(--spacing-sm);
+}
+
+.edit-radio,
+.edit-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-sm);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.edit-radio input,
+.edit-check input {
+    accent-color: var(--color-primary);
+    cursor: pointer;
+}
+
+.edit-sep {
+    width: 1px;
+    align-self: stretch;
+    background: var(--color-border);
+}
+
+.edit-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-sm);
+    color: var(--color-text-primary);
+}
+
+.edit-field input[type="number"] {
+    width: 110px;
+    padding: 6px 8px;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.edit-field input[type="number"]:focus {
+    border-color: var(--color-primary);
+    outline: none;
+}
+
+.edit-unit {
+    color: var(--color-text-tertiary);
+    font-size: var(--text-xs);
+}
+
+.edit-counter {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    color: var(--color-text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+
+.edit-counter.has-edits {
+    color: var(--color-warning);
+    font-weight: 600;
+}
+
+.edit-hover-row {
+    padding-top: var(--spacing-xs);
+    border-top: 1px solid var(--color-divider);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    min-height: 1.4em;
+}
+
+/* Выбор слоя Z в редакторе сопротивлений */
+.edit-layer-slider {
+    flex: 1;
+    min-width: 220px;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--color-bg-tertiary);
+    outline: none;
+    cursor: pointer;
+    accent-color: var(--color-primary);
+}
+
+.edit-layer-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    border: 3px solid var(--color-bg-secondary);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
+    cursor: grab;
+}
+
+.edit-layer-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    border: 3px solid var(--color-bg-secondary);
+    cursor: grab;
+}
+
+.edit-layer-slider:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.edit-layer-info {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    min-width: 240px;
+}
+
+.edit-layer-info strong {
+    color: var(--color-primary);
+}
+
+/* Фильтр ρ (dual range-slider) в панели редактирования */
+.edit-range-wrap {
+    flex: 1 1 320px;
+    min-width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.edit-range-labels {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--spacing-sm);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.edit-range-labels .edit-range-hint {
+    color: var(--color-text-tertiary);
+}
+
+.edit-range-wrap .range-slider {
+    margin: 6px 4px 2px;
+}
+
+.btn-danger-ghost {
+    background: transparent;
+    border: 1px solid var(--color-danger);
+    color: var(--color-danger);
+}
+
+.btn-danger-ghost:hover {
+    background: var(--color-danger);
+    color: #fff;
+}
+
+/* === Индикатор правок coarse-сетки на дашборде === */
+.grid-edited-status {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: rgba(251, 188, 4, 0.12);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--color-warning);
+}
+
+.grid-edited-status.hidden {
+    display: none;
 }
 
 /* === Print Styles === */

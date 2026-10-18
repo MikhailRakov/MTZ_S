@@ -287,11 +287,11 @@ function show3DResultViewer(fileContent, fileName) {
         </div>
         <div>
           <div style="color: var(--color-text-tertiary);">Область (X × Y)</div>
-          <div style="color: var(--color-primary); font-weight: 600;">${(xExtent/1000).toFixed(1)} × ${(yExtent/1000).toFixed(1)} км</div>
+          <div style="color: var(--color-primary); font-weight: 600;">${Math.round(xExtent).toLocaleString('ru-RU')} × ${Math.round(yExtent).toLocaleString('ru-RU')} м</div>
         </div>
         <div>
           <div style="color: var(--color-text-tertiary);">Глубина</div>
-          <div style="color: var(--color-primary); font-weight: 600;">${(zExtent/1000).toFixed(1)} км</div>
+          <div style="color: var(--color-primary); font-weight: 600;">${Math.round(zExtent).toLocaleString('ru-RU')} м</div>
         </div>
         <div>
           <div style="color: var(--color-text-tertiary);">Мин. сопротивление</div>

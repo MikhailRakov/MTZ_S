@@ -350,8 +350,26 @@ export class CoarseGenerator {
         return cells;
     }
 
-    // Build Coarse.dat content
-    buildCoarseContent(config, xCells, yCells, zCells) {
+    // Форматирует число в ModEM-вид: +X.XXXXXE+XX (ведущий +, 5 знаков, экспонента из 2 цифр)
+    _formatRhoForDat(rho) {
+        const expStr = Number(rho).toExponential(5);
+        const match = expStr.match(/^([+-]?\d\.\d{5})e([+-])(\d+)$/i);
+        if (match) {
+            const mantissa = match[1];
+            const sign = match[2];
+            const exp = match[3].padStart(2, '0'); // Ensure two digits: 2 -> 02
+            const formatted = `${mantissa}E${sign}${exp}`;
+            // Ensure leading + for positive numbers
+            return (formatted.startsWith('-') ? formatted : '+' + formatted).toUpperCase();
+        }
+        // Fallback
+        return '+1.00000E+02';
+    }
+
+    // Build Coarse.dat content.
+    // rhoValues (опционально) — плоский массив сопротивлений в порядке записи файла:
+    // idx = z*nY*nX + y*nX + x. Если не передан — все ячейки получают config.defaultRho.
+    buildCoarseContent(config, xCells, yCells, zCells, rhoValues = null) {
         const timestamp = new Date().toISOString().split('T')[0];
         let content = `Coarse model written by User ${timestamp}\n`;
         content += `${config.nX} ${config.nY} ${config.nZ} 0   LINEAR\n`;
@@ -367,26 +385,15 @@ export class CoarseGenerator {
 
         // Resistivity values with CORRECT format: +X.XXXXXE+XX (two digits in exponent)
         // For each Z layer: nY rows of nX values, then empty line
+        const defaultRho = config.defaultRho ?? 100;
         for (let z = 0; z < config.nZ; z++) {
             for (let y = 0; y < config.nY; y++) {
                 const row = [];
                 for (let x = 0; x < config.nX; x++) {
-                    // Format: +1.00000E+02 (with leading +, 5 decimals, E+XX with TWO digits)
-                    const expStr = config.defaultRho.toExponential(5);
-                    // Parse exponent to ensure two digits
-                    const match = expStr.match(/^([+-]?\d\.\d{5})e([+-])(\d+)$/i);
-                    if (match) {
-                        const mantissa = match[1];
-                        const sign = match[2];
-                        const exp = match[3].padStart(2, '0'); // Ensure two digits: 2 -> 02
-                        const formatted = `${mantissa}E${sign}${exp}`;
-                        // Ensure leading + for positive numbers
-                        const withPlus = formatted.startsWith('-') ? formatted : '+' + formatted;
-                        row.push(withPlus.toUpperCase());
-                    } else {
-                        // Fallback
-                        row.push('+1.00000E+02');
-                    }
+                    const idx = z * config.nY * config.nX + y * config.nX + x;
+                    let rho = rhoValues ? rhoValues[idx] : defaultRho;
+                    if (!(rho > 0) || !isFinite(rho)) rho = defaultRho;
+                    row.push(this._formatRhoForDat(rho));
                 }
                 content += row.join(' ') + '\n';
             }
@@ -409,6 +416,19 @@ export class CoarseGenerator {
 
     // Generate complete Coarse.dat
     generateCoarse(profilesStats, config) {
+        // Fail-fast валидация: координаты станций должны быть конечными числами.
+        // Иначе origin/extent уедут в NaN и Coarse.dat сломает бэкенд.
+        const coordsOK = [
+            profilesStats?.xMin, profilesStats?.xMax,
+            profilesStats?.yMin, profilesStats?.yMax,
+        ].every(v => Number.isFinite(v));
+        if (!coordsOK) {
+            throw new Error(
+                'Не удалось определить координаты станций (xMin/xMax/yMin/yMax не число). ' +
+                'Проверьте Profiles.dat: ожидаются строки с ≥7 колонками "T code ... X Y Z".'
+            );
+        }
+
         const xCells = this.generateXYCells(
             profilesStats.xMin,
             profilesStats.xMax,
@@ -451,11 +471,28 @@ export class CoarseGenerator {
         config.originY = centerY - (yExtent / 2);
         config.originZ = 0.0;
 
+        // Вторая линия защиты: ничего из критичных чисел не должно быть NaN,
+        // иначе в Coarse.dat попадёт "NaN" и расчётный бэкенд его не прочитает
+        const finiteOK = [config.originX, config.originY, xExtent, yExtent]
+            .every(v => Number.isFinite(v)) &&
+            [...xCells, ...yCells, ...zCells].every(v => Number.isFinite(v) && v > 0);
+        if (!finiteOK) {
+            throw new Error(
+                'Генерация сетки дала некорректные значения (NaN/Infinity). ' +
+                'Проверьте параметры: nX/nY/nZ, минимальный размер ячейки, фактор роста.'
+            );
+        }
+
         console.log(`[COARSE GENERATOR] Grid origin: X=${config.originX.toFixed(2)}, Y=${config.originY.toFixed(2)}, Z=${config.originZ.toFixed(2)}`);
         console.log(`[COARSE GENERATOR] Station center: X=${centerX.toFixed(2)}, Y=${centerY.toFixed(2)}`);
         console.log(`[COARSE GENERATOR] Grid extent: X=${xExtent.toFixed(2)}, Y=${yExtent.toFixed(2)}`);
 
-        const content = this.buildCoarseContent(config, xCells, yCells, zCells);
+        // Плоский массив удельных сопротивлений всех ячеек (порядок: z -> y -> x,
+        // idx = z*nY*nX + y*nX + x). Инициализируется фоновым значением;
+        // пользователь может точечно менять его в редакторе (априорная информация).
+        const rhoValues = new Array(config.nX * config.nY * config.nZ).fill(config.defaultRho ?? 100);
+
+        const content = this.buildCoarseContent(config, xCells, yCells, zCells, rhoValues);
 
         // Actual core/padding split, read back from the generated cell lists
         const nCore = cells => {
@@ -471,6 +508,8 @@ export class CoarseGenerator {
 
         this.generatedCoarse = {
             content,
+            contentDirty: false,
+            rhoValues,
             xCells,
             yCells,
             zCells,
@@ -480,6 +519,55 @@ export class CoarseGenerator {
         };
 
         return this.generatedCoarse;
+    }
+
+    // === Редактирование сопротивлений ячеек (априорная информация) ===
+
+    // Устанавливает сопротивление rho (Ом·м) для списка плоских индексов ячеек.
+    // Контент Coarse.dat помечается грязным и пересобирается лениво (ensureContent).
+    setCellsRho(indices, rho) {
+        const g = this.generatedCoarse;
+        if (!g) throw new Error('No coarse data generated yet');
+        if (!isFinite(rho) || rho <= 0) {
+            throw new Error(`Некорректное значение сопротивления: ${rho}`);
+        }
+        const arr = g.rhoValues;
+        for (const idx of indices) {
+            if (idx >= 0 && idx < arr.length) arr[idx] = rho;
+        }
+        g.contentDirty = true;
+    }
+
+    // Возвращает все ячейки к фоновому сопротивлению (config.defaultRho)
+    resetRhoValues() {
+        const g = this.generatedCoarse;
+        if (!g) return;
+        g.rhoValues.fill(g.config.defaultRho ?? 100);
+        g.contentDirty = true;
+    }
+
+    // Количество ячеек, отличающихся от фонового сопротивления
+    getModifiedCount() {
+        const g = this.generatedCoarse;
+        if (!g) return 0;
+        const def = g.config.defaultRho ?? 100;
+        let n = 0;
+        for (const v of g.rhoValues) {
+            if (v !== def) n++;
+        }
+        return n;
+    }
+
+    // Пересобирает content, если были правки, и возвращает актуальный контент
+    ensureContent() {
+        const g = this.generatedCoarse;
+        if (!g) throw new Error('No coarse data generated yet');
+        if (g.contentDirty) {
+            g.content = this.buildCoarseContent(g.config, g.xCells, g.yCells, g.zCells, g.rhoValues);
+            g.contentDirty = false;
+            console.log(`[COARSE GENERATOR] Content rebuilt after edits (${this.getModifiedCount()} modified cells)`);
+        }
+        return g.content;
     }
 
     // Initialize 3D visualization
@@ -1049,7 +1137,9 @@ export class CoarseGenerator {
         }
 
         try {
-            const blob = new Blob([this.generatedCoarse.content], { type: 'text/plain;charset=utf-8' });
+            // Пересобираем контент, если ячейки редактировались
+            const content = this.ensureContent();
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -1072,7 +1162,8 @@ export class CoarseGenerator {
             throw new Error('No coarse data generated yet');
         }
 
-        return new File([this.generatedCoarse.content], filename, { type: 'text/plain' });
+        // Пересобираем контент, если ячейки редактировались
+        return new File([this.ensureContent()], filename, { type: 'text/plain' });
     }
 
     // Clean up
