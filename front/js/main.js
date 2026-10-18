@@ -311,3 +311,78 @@ window.requestDownload = async function(s3Key) {
 
 // Initialize Coarse Generator
 initCoarseGenerator();
+
+// === Queue Stats Widget (active consumers from RabbitMQ) ===
+(function initQueueStatsWidget() {
+    const widget = document.getElementById('queue-stats-widget');
+    const consumersEl = document.getElementById('queue-stats-consumers');
+    const pendingEl = document.getElementById('queue-stats-pending');
+    const pendingSection = document.getElementById('queue-stats-pending-section');
+
+    if (!widget || !consumersEl) return;
+
+    const POLL_INTERVAL_MS = 10000; // обновляем каждые 10 секунд
+    let lastKnownCount = null;
+
+    async function fetchQueueStats() {
+        try {
+            const response = await fetch('/api/system/stats');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (!data.queue_ready) {
+                // Очередь недоступна
+                widget.classList.remove('queue-online');
+                widget.classList.add('queue-offline');
+                consumersEl.textContent = '0';
+                widget.title = 'Очередь расчётов недоступна';
+                if (pendingSection) pendingSection.style.display = 'none';
+                lastKnownCount = 0;
+                return;
+            }
+
+            const consumers = data.active_consumers || 0;
+            const pending = data.messages_pending || 0;
+
+            // Обновляем количество консьюмеров
+            consumersEl.textContent = consumers;
+
+            // Обновляем состояние виджета
+            widget.classList.remove('queue-offline', 'queue-error');
+            if (consumers > 0) {
+                widget.classList.add('queue-online');
+                widget.title = `Активных серверов расчёта: ${consumers}`;
+            } else {
+                widget.classList.add('queue-offline');
+                widget.title = 'Нет активных серверов расчёта';
+            }
+
+            // Показываем количество задач в очереди, если они есть
+            if (pendingSection && pendingEl) {
+                if (pending > 0) {
+                    pendingSection.style.display = 'flex';
+                    pendingEl.textContent = pending;
+                } else {
+                    pendingSection.style.display = 'none';
+                }
+            }
+
+            lastKnownCount = consumers;
+
+        } catch (error) {
+            console.warn('[QUEUE STATS] Failed to fetch:', error.message);
+            widget.classList.remove('queue-online');
+            widget.classList.add('queue-error');
+            consumersEl.textContent = '—';
+            widget.title = 'Не удалось получить данные очереди';
+            if (pendingSection) pendingSection.style.display = 'none';
+        }
+    }
+
+    // Первый запрос сразу, затем поллинг
+    fetchQueueStats();
+    setInterval(fetchQueueStats, POLL_INTERVAL_MS);
+})();

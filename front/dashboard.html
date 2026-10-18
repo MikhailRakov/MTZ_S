@@ -31,7 +31,21 @@
             <img src="a_ficon.gif" alt="3D MTZ Icon">
         </div>
         <h1 class="header-title">3D MTZ Inversion</h1>
-        <div class="user-profile">
+        <div class="header-right">
+            <!-- Queue Stats Widget -->
+            <div class="queue-stats-widget" id="queue-stats-widget" title="Состояние очереди расчётов">
+                <div class="queue-stats-icon" id="queue-stats-icon">⚙️</div>
+                <div class="queue-stats-info">
+                    <div class="queue-stats-label">Серверы расчёта</div>
+                    <div class="queue-stats-value" id="queue-stats-consumers">—</div>
+                </div>
+                <div class="queue-stats-pending" id="queue-stats-pending-section" style="display: none;">
+                    <span class="queue-stats-pending-label">В очереди:</span>
+                    <span class="queue-stats-pending-value" id="queue-stats-pending">0</span>
+                </div>
+            </div>
+
+            <div class="user-profile">
             <div class="user-avatar" id="user-avatar-small">AB</div>
             <!-- Profile Dropdown -->
             <div class="profile-dropdown" id="profile-dropdown">
@@ -44,6 +58,7 @@
                 </div>
                 <button id="logout-btn" class="logout-button">Выйти</button>
             </div>
+        </div>
         </div>
     </header>
 
@@ -179,6 +194,7 @@
                                 </div>
                             </div>
                             <div id="grid-stats" class="grid-stats"></div>
+                            <div id="grid-edited-status" class="grid-edited-status hidden"></div>
                         </div>
                     </div>
                 </div>

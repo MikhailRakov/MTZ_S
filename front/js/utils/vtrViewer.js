@@ -83,6 +83,9 @@ export async function showVtrViewer(vtrText, fileName) {
                 <button class="file-viewer-close">&times;</button>
             </div>
             <div class="result-viewer-layout">
+                <div class="viewer-3d-wrap">
+                    <div id="vtr-3d-container" class="vtr-3d-container"></div>
+                </div>
                 <aside class="viewer-settings-panel" id="viewer-settings-panel">
                     <div class="settings-section">
                         <label class="settings-label" for="settings-colormap">Цветовая палитра</label>
@@ -96,8 +99,8 @@ export async function showVtrViewer(vtrText, fileName) {
                         <div class="range-slider" data-min-input="settings-range-min" data-max-input="settings-range-max">
                             <div class="range-track"></div>
                             <div class="range-fill" id="settings-range-fill"></div>
-                            <input type="range" class="range-input range-min" id="settings-range-min" min="0" max="1000" step="1" value="0" />
-                            <input type="range" class="range-input range-max" id="settings-range-max" min="0" max="1000" step="1" value="1000" />
+                            <input type="range" class="range-input range-min" id="settings-range-min" min="0" max="10000" step="1" value="0" />
+                            <input type="range" class="range-input range-max" id="settings-range-max" min="0" max="10000" step="1" value="10000" />
                         </div>
                         <div class="range-bounds">
                             <span id="settings-range-min-label"></span>
@@ -122,9 +125,6 @@ export async function showVtrViewer(vtrText, fileName) {
                         <button class="viewer-reset-btn" id="settings-reset">↺ Сбросить настройки</button>
                     </div>
                 </aside>
-                <div class="viewer-3d-wrap">
-                    <div id="vtr-3d-container" class="vtr-3d-container"></div>
-                </div>
             </div>
             <div id="vtr-stats" class="vtr-stats">
                 <p style="color: var(--color-text-tertiary);">⏳ Чтение .vtr файла…</p>
@@ -173,8 +173,10 @@ export async function showVtrViewer(vtrText, fileName) {
     });
 
     // === Обработчики панели настроек ===
-    // Слайдер диапазона работает в лог-шкале: внутреннее значение [0..1000]
+    // Слайдер диапазона работает в лог-шкале: внутреннее значение [0..10000]
     // маппится в [log10(dataMin), log10(dataMax)], а из него в Ω·м.
+    // 10000 шагов вместо 1000 — на широком слайдере даёт плавную настройку
+    // без пропуска значений.
     let dataMinRho = 1;
     let dataMaxRho = 10;
     const updateRangeFromSlider = () => {
@@ -185,14 +187,14 @@ export async function showVtrViewer(vtrText, fileName) {
             // визуально не даём ползункам меняться местами
             [vMin, vMax] = [vMax, vMin];
         }
-        const t = (v, lo, hi) => lo + (v / 1000) * (hi - lo);
+        const t = (v, lo, hi) => lo + (v / 10000) * (hi - lo);
         const logLo = Math.log10(dataMinRho);
         const logHi = Math.log10(dataMaxRho);
         const minRho = Math.pow(10, t(vMin, logLo, logHi));
         const maxRho = Math.pow(10, t(vMax, logLo, logHi));
         vtrViewerInstance.setRange(minRho, maxRho);
-        rangeFill.style.left = `${vMin / 10}%`;
-        rangeFill.style.width = `${(vMax - vMin) / 10}%`;
+        rangeFill.style.left = `${vMin / 100}%`;
+        rangeFill.style.width = `${(vMax - vMin) / 100}%`;
         rangeMinLabel.textContent = formatRho(minRho);
         rangeMaxLabel.textContent = formatRho(maxRho);
         rangeHint.textContent = `${formatRho(minRho)} … ${formatRho(maxRho)} Ω·м`;
@@ -220,7 +222,7 @@ export async function showVtrViewer(vtrText, fileName) {
         vtrViewerInstance.resetSettings();
         // Синхронизируем UI с восстановленными значениями
         rangeMinInput.value = 0;
-        rangeMaxInput.value = 1000;
+        rangeMaxInput.value = 10000;
         opacityInput.value = 100;
         opacityHint.textContent = '100%';
         wireframeInput.checked = false;
@@ -271,11 +273,11 @@ export async function showVtrViewer(vtrText, fileName) {
                 </div>
                 <div>
                     <div class="vtr-stats-label">Область (X × Y)</div>
-                    <div class="vtr-stats-value">${(xExtent / 1000).toFixed(1)} × ${(yExtent / 1000).toFixed(1)} км</div>
+                    <div class="vtr-stats-value">${formatMeters(xExtent)} × ${formatMeters(yExtent)} м</div>
                 </div>
                 <div>
                     <div class="vtr-stats-label">Глубина</div>
-                    <div class="vtr-stats-value">${(zExtent / 1000).toFixed(1)} км</div>
+                    <div class="vtr-stats-value">${formatMeters(zExtent)} м</div>
                 </div>
                 <div>
                     <div class="vtr-stats-label">Мин. сопротивление</div>
@@ -303,6 +305,12 @@ export async function showVtrViewer(vtrText, fileName) {
         console.error('Ошибка парсинга .vtr файла:', error);
         statsDiv.innerHTML = `<p style="color: var(--color-danger);">Ошибка при парсинге файла: ${error.message}</p>`;
     }
+}
+
+// Форматирует метры с группировкой разрядов: 2193934 -> "2 193 934"
+function formatMeters(v) {
+    if (!isFinite(v)) return '—';
+    return Math.round(v).toLocaleString('ru-RU');
 }
 
 // Форматирует Ω·м для подписей: 1.23, 12.3, 123, 1.2K, 1.2e+4

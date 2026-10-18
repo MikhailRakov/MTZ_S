@@ -280,15 +280,15 @@ export function initCoarseGenerator() {
                         </div>
                         <div class="stat-item">
                             <div class="stat-label">X (север) протяженность</div>
-                            <div class="stat-value">${(xExtent / 1000).toFixed(1)} км</div>
+                            <div class="stat-value">${Math.round(xExtent).toLocaleString('ru-RU')} м</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-label">Y (восток) протяженность</div>
-                            <div class="stat-value">${(yExtent / 1000).toFixed(1)} км</div>
+                            <div class="stat-value">${Math.round(yExtent).toLocaleString('ru-RU')} м</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-label">Z глубина</div>
-                            <div class="stat-value">${(zExtent / 1000).toFixed(1)} км</div>
+                            <div class="stat-value">${Math.round(zExtent).toLocaleString('ru-RU')} м</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-label">Первый Z слой</div>
@@ -337,6 +337,8 @@ export function initCoarseGenerator() {
             useGeneratedBtn.style.background = 'linear-gradient(135deg, var(--color-success), var(--color-success-hover))';
 
             readyCoarseName.textContent = '✓ Coarse.dat (сгенерирован)';
+            // Если ячейки редактировались — подпись сразу покажет число правок
+            updateEditedStatus();
 
             setTimeout(() => {
                 useGeneratedBtn.textContent = '✓ Использовать эту сетку';
@@ -513,8 +515,10 @@ export function initCoarseGenerator() {
         showVolumeModal(simpegModelData, 'Модель проводимости SimPEG (объём)');
     });
 
-    // Объёмный просмотр сгенерированной Coarse-сетки: ячейки с единым
-    // стартовым сопротивлением (defaultRho), в стиле ResultViewer
+    // Объёмный просмотр сгенерированной Coarse-сетки С РЕДАКТИРОВАНИЕМ:
+    // пользователь может менять сопротивление отдельных ячеек (априорная информация).
+    // Правки пишутся в общий массив coarse.rhoValues, а Coarse.dat пересобирается
+    // лениво — при скачивании или «Использовать эту сетку».
     volumeCoarseBtn?.addEventListener('click', () => {
         const coarse = generator.generatedCoarse;
         if (!coarse) {
@@ -522,13 +526,72 @@ export function initCoarseGenerator() {
             return;
         }
         const { config, xCells, yCells, zCells } = coarse;
-        const total = config.nX * config.nY * config.nZ;
-        const rhoValues = new Array(total).fill(config.defaultRho || 100);
+        // Страховка: если generatedCoarse создан старой версией модуля
+        // (например, из кэша браузера) — инициализируем массив ρ на месте
+        if (!Array.isArray(coarse.rhoValues)) {
+            console.warn('[COARSE EDIT] rhoValues отсутствует — инициализирую фоновым значением');
+            coarse.rhoValues = new Array(config.nX * config.nY * config.nZ).fill(config.defaultRho || 100);
+        }
+        const rhoValues = coarse.rhoValues;
         showVolumeModal(
             { nX: config.nX, nY: config.nY, nZ: config.nZ, xCells, yCells, zCells, rhoValues },
-            `Coarse-сетка ${config.nX}×${config.nY}×${config.nZ} (ρ = ${config.defaultRho} Ω·м)`
+            `Coarse-сетка ${config.nX}×${config.nY}×${config.nZ} (фон ρ = ${config.defaultRho} Ω·м)`,
+            {
+                editing: {
+                    defaultRho: config.defaultRho || 100,
+                    onCellsEdited: (indices, rho) => {
+                        try {
+                            generator.setCellsRho(indices, rho);
+                        } catch (err) {
+                            console.error('[COARSE EDIT] setCellsRho failed:', err);
+                        }
+                        updateEditedStatus();
+                    },
+                    getModifiedCount: () => generator.getModifiedCount(),
+                }
+            }
         );
     });
+
+    // Индикатор правок сетки на дашборде (под 3D-визуализацией)
+    function updateEditedStatus() {
+        const statusEl = document.getElementById('grid-edited-status');
+        if (!statusEl) return;
+        const coarse = generator.generatedCoarse;
+        if (!coarse) {
+            statusEl.classList.add('hidden');
+            return;
+        }
+        const n = generator.getModifiedCount();
+        if (n > 0) {
+            statusEl.classList.remove('hidden');
+            statusEl.innerHTML =
+                `✏️ <strong>Изменено ячеек: ${n.toLocaleString('ru-RU')}</strong> — ` +
+                `сопротивления отличаются от фона (${coarse.config.defaultRho} Ω·м). ` +
+                `Coarse.dat будет пересобран при скачивании или отправке на расчёт.`;
+        } else {
+            statusEl.classList.add('hidden');
+        }
+        // Обновить подпись у готового файла, если он уже добавлен
+        const modified = n > 0 ? `, изменено ${n.toLocaleString('ru-RU')} ячеек` : '';
+        const wasAttached = readyCoarseName && readyCoarseName.textContent.includes('сгенерирован');
+        if (wasAttached) {
+            readyCoarseName.textContent = `✓ Coarse.dat (сгенерирован${modified})`;
+            // Если файл уже был приложен к форме — перевкладываем актуальную версию,
+            // иначе на расчёт уйдёт снапшот с устаревшими сопротивлениями
+            if (fileInputC && fileInputC.files.length > 0) {
+                try {
+                    const freshFile = generator.getCoarseAsFile('Coarse.dat');
+                    const dt = new DataTransfer();
+                    dt.items.add(freshFile);
+                    fileInputC.files = dt.files;
+                    console.log('[COARSE EDIT] Re-attached updated Coarse.dat to upload form');
+                } catch (err) {
+                    console.error('[COARSE EDIT] Failed to re-attach Coarse.dat:', err);
+                }
+            }
+        }
+    }
 
     // Use converted Profiles.dat for coarse generation
     useConvertedProfilesBtn?.addEventListener('click', () => {
@@ -678,6 +741,13 @@ export function resetCoarseGenerator() {
     // Reset generator instance
     generatorInstance.profilesData = null;
     generatorInstance.generatedCoarse = null;
+
+    // Скрыть индикатор правок сетки (правки живут в generatedCoarse.rhoValues)
+    const gridEditedStatus = document.getElementById('grid-edited-status');
+    if (gridEditedStatus) {
+        gridEditedStatus.classList.add('hidden');
+        gridEditedStatus.innerHTML = '';
+    }
 
     console.log('[COARSE GENERATOR] State reset for new solution');
 }
