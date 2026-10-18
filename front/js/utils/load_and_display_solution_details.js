@@ -7,12 +7,107 @@ import { displayReadySolution } from './readySolutionBlock.js';
 
 let currentIdToken = null;
 let resultViewerInstance = null;
+// Контейнер деталей текущего решения — для точечного обновления бейджа статуса
+let detailsContainerEl = null;
+// Таймер опроса статуса во время выполнения расчёта
+let statusPollTimer = null;
+
+const IN_PROGRESS_STATUSES = ['running', 'queued', 'pending', 'processing', 'in_progress', 'waiting'];
+
+function stopStatusPolling() {
+    if (statusPollTimer) {
+        clearInterval(statusPollTimer);
+        statusPollTimer = null;
+    }
+}
+
+// Обновляет бейдж статуса и состояние кнопки перезапуска без полной
+// перерисовки блока деталей
+function updateStatusBadge(statusData) {
+    if (!detailsContainerEl || !statusData) return;
+    const status = statusData.status || 'unknown';
+
+    const badge = detailsContainerEl.querySelector('.solution-status');
+    if (badge) {
+        badge.className = `solution-status ${getStatusClass(status)}`;
+        badge.title = statusData.message || '';
+        badge.textContent = `${getStatusIcon(status)} ${formatStatus(status)}`;
+    }
+
+    const rerunBtn = detailsContainerEl.querySelector('#rerun-solution-btn');
+    if (rerunBtn) {
+        const inProgress = IN_PROGRESS_STATUSES.includes(status);
+        rerunBtn.disabled = inProgress;
+        rerunBtn.textContent = inProgress ? '⏳ Расчёт выполняется' : '🔄 Перезапустить расчёт';
+    }
+}
+
+// Периодический опрос статуса: обновляет бейдж, а по завершении расчёта
+// подтягивает свежие файлы и историю версий результатов
+function startStatusPolling(solutionId, idToken) {
+    stopStatusPolling();
+    statusPollTimer = setInterval(async () => {
+        try {
+            const data = await apiCallWithTimeout(`/api/users/self/solutions/${solutionId}/status`, 'GET', null, {}, idToken, 5000);
+            updateStatusBadge(data);
+            const st = (data && data.status) || 'unknown';
+            if (st === 'completed' || st === 'success' || st === 'finished') {
+                stopStatusPolling();
+                await loadSolutionFiles(solutionId, idToken);
+            } else if (st === 'failed' || st === 'error' || st === 'cancelled' || st === 'canceled') {
+                stopStatusPolling();
+            }
+        } catch (err) {
+            console.warn('[SOLUTION DETAILS] Опрос статуса не удался:', err);
+        }
+    }, 10000);
+}
+
+// Кнопка «Перезапустить расчёт»: повторно отправляет исходные данные решения
+// в очередь; прежние версии результатов сохраняются в истории
+function setupRerunButton(solutionId, idToken) {
+    const btn = detailsContainerEl?.querySelector('#rerun-solution-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const confirmed = window.confirm(
+            'Перезапустить расчёт этого решения?\n\n' +
+            'Исходные данные будут отправлены в очередь заново. ' +
+            'Прежние версии результатов сохранятся в истории.'
+        );
+        if (!confirmed) return;
+
+        btn.disabled = true;
+        btn.textContent = '⏳ Отправка...';
+        try {
+            const res = await fetch(`/api/users/self/solutions/${solutionId}/rerun`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${idToken}` }
+            });
+            if (!res.ok) {
+                let msg = `HTTP ${res.status}`;
+                try {
+                    const errData = await res.json();
+                    if (errData.error) msg = errData.error;
+                } catch (_) { /* тело не JSON — оставляем HTTP-код */ }
+                throw new Error(msg);
+            }
+            // Сразу показываем «в очереди» и следим за статусом до финала
+            updateStatusBadge({ status: 'queued', message: 'Задача отправлена на расчёт' });
+            startStatusPolling(solutionId, idToken);
+        } catch (err) {
+            console.error('[SOLUTION DETAILS] Ошибка перезапуска решения:', err);
+            alert(`Не удалось перезапустить решение: ${err.message}`);
+            btn.disabled = false;
+            btn.textContent = '🔄 Перезапустить расчёт';
+        }
+    });
+}
 
 export async function loadSolutionFiles(solutionId, idToken){
   currentIdToken = idToken; // Store token for later use
   try {
     const files = await fetchSolutionFiles(solutionId, idToken);
-    displaySolutionFiles(files, solutionId, idToken);
+    displaySolutionFiles(hideVersionArchives(files), solutionId, idToken);
   } catch (err) {
     const container = document.getElementById('files-list');
     const filesSection = document.getElementById('solution-files-container');
@@ -21,6 +116,12 @@ export async function loadSolutionFiles(solutionId, idToken){
       filesSection.classList.remove('hidden');
     }
   }
+}
+
+// Архивы версий показываются в блоке «Готовые решения» (с выбором версии) —
+// в плоском списке файлов их дублировать не нужно
+function hideVersionArchives(files) {
+  return (files || []).filter(f => !/\.zip$/i.test(f.name || ''));
 }
 
 // Возвращает список файлов решения из S3 (без отрисовки)
@@ -342,6 +443,10 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
     // Reset coarse generator state when switching solutions
     resetCoarseGenerator();
 
+    // Предыдущий опрос статуса (другое решение) больше не нужен
+    stopStatusPolling();
+    detailsContainerEl = solutionDetailsContainer;
+
     setCurrentSolutionID(solutionID);
     const elements = {
         //solutionDetailsView,
@@ -419,6 +524,10 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
                     <span class="solution-status ${statusClass}" title="${statusMessage}">
                         ${statusIcon} ${formattedStatus}
                     </span>
+                    <button type="button" id="rerun-solution-btn" class="btn btn-secondary btn-sm"
+                        title="Повторно отправить исходные данные на расчёт; прежние версии результатов сохранятся">
+                        🔄 Перезапустить расчёт
+                    </button>
                 </div>
             </div>
             <div class="solution-meta">
@@ -445,6 +554,15 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
         // Вариант 2: Обновляем весь контейнер, затем показываем форму (проще)
         solutionDetailsContainer.innerHTML = solutionInfoHTML;
 
+        // Перезапуск решения + синхронизация бейджа/кнопки с текущим статусом
+        setupRerunButton(solutionID, idToken);
+        updateStatusBadge(statusData);
+        if (IN_PROGRESS_STATUSES.includes(status)) {
+            // Расчёт уже идёт — обновляем статус до терминального,
+            // по завершении подтянутся новые версии результатов
+            startStatusPolling(solutionID, idToken);
+        }
+
         // Добавляем обработчик формы загрузки, если он не глобальный
         // setupFileUploadHandler(solutionID, idToken, elements); // Можно вызвать здесь
 
@@ -464,12 +582,14 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
         }
 
         // Список файлов уже загружен — отображаем его вместе с остальными блоками
-        displaySolutionFiles(files, solutionID, idToken);
+        // (архивы версий не дублируем: они в блоке «Готовые решения» ниже)
+        displaySolutionFiles(hideVersionArchives(files), solutionID, idToken);
 
         // Блок "Готовое решение" (архив .zip с .vtr файлами)
         displayReadySolution(files, solutionID, idToken);
     } catch (error) {
         console.error(`[SOLUTION DETAILS] Ошибка при загрузке деталей решения ${solutionID}:`, error);
+        stopStatusPolling();
         solutionDetailsPlaceholder.textContent = `Ошибка загрузки информации о решении: ${error.message}`;
         solutionDetailsPlaceholder.classList.remove('hidden');
         solutionDetailsContainer.classList.add('hidden');

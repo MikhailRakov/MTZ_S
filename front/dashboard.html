@@ -285,19 +285,25 @@
                 </div>
             </div>
 
-             <!-- Ready Solution Section (zip с .vtr результатами) -->
+             <!-- Ready Solution Section: история версий результатов (zip с .vtr) -->
             <div id="ready-solution-container" class="files-section hidden">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 8px;">
-                    <h3 style="margin: 0;">📦 Готовое решение</h3>
+                    <h3 style="margin: 0;">📦 Готовые решения <span id="ready-versions-count" class="versions-count-badge"></span></h3>
                     <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                         <button type="button" id="extract-zip-btn" class="btn btn-sm hidden">📂 Распаковать архив</button>
                         <button type="button" id="download-results-zip-btn" class="btn btn-success btn-sm hidden">💾 Скачать архив (.zip)</button>
                     </div>
                 </div>
-                <p style="color: var(--color-text-secondary); margin-bottom: 16px;">
-                    Архив результатов с файлами .vtr (3D модель удельного сопротивления).
-                    Распакованные файлы сохраняются в локальном хранилище браузера.
+                <p style="color: var(--color-text-secondary); margin-bottom: 12px;">
+                    Каждый запуск расчёта сохраняется отдельной версией архива с файлами .vtr
+                    (3D модели удельного сопротивления). Выберите архив, распакуйте его —
+                    после этого модели можно просматривать в браузере.
                 </p>
+                <div class="version-select-row">
+                    <label for="result-version-select">Архив с решением:</label>
+                    <select id="result-version-select"></select>
+                    <span id="result-version-info" class="version-info"></span>
+                </div>
                 <div id="vtr-files-list" class="files-grid"></div>
                 <div id="vtr-loading-status" class="hidden" style="margin-top: 12px; font-size: var(--text-sm);"></div>
             </div>
