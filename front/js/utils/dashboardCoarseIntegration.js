@@ -602,9 +602,19 @@ export function initCoarseGenerator() {
 
         // Если в .npz есть сетка — строим Coarse.dat ИЗ НЕЁ (та же модель,
         // что решалась в SimPEG), а не из эвристики скин-слоя.
-        const coarseFromMesh = simpegNpz ? buildCoarseFromSimpeg(simpegNpz) : null;
+        // Ошибки геометрии показываем сразу: падение в MATLAB будет только
+        // через несколько часов расчёта.
+        let coarseFromMesh = null;
+        if (simpegNpz) {
+            try {
+                coarseFromMesh = buildCoarseFromSimpeg(simpegNpz);
+            } catch (err) {
+                console.error('[SIMPEG→COARSE]', err);
+                alert(`Не удалось построить Coarse.dat из сетки .npz:\n${err.message}`);
+                return;
+            }
+        }
         if (coarseFromMesh) {
-            alert ("Сеть есть в .npz");
             const coarseFile = new File([coarseFromMesh.content], 'Coarse.dat', { type: 'text/plain' });
             const dtC = new DataTransfer();
             dtC.items.add(coarseFile);
