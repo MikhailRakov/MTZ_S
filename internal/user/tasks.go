@@ -87,6 +87,46 @@ func (h *handler) CreateTask(ctx context.Context, userID, solutionID, s3FileKey 
 	return newTaskRef.ID, nil
 }
 
+// GetLatestTask возвращает последнюю задачу решения (по created_at).
+// Сортировка выполняется в коде, а не запросом: порядок по полю после
+// двух фильтров равенства потребовал бы составного индекса Firestore.
+func (h *handler) GetLatestTask(ctx context.Context, userID, solutionID string) (*Task, error) {
+	client, err := h.firebaseApp.Firestore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Firestore client: %w", err)
+	}
+	defer client.Close()
+
+	iter := client.Collection("tasks").
+		Where("user_id", "==", userID).
+		Where("solution_id", "==", solutionID).
+		Documents(ctx)
+	defer iter.Stop()
+
+	var best *Task
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to iterate tasks: %w", err)
+		}
+		var t Task
+		if err := doc.DataTo(&t); err != nil {
+			continue
+		}
+		if best == nil || t.CreatedAt > best.CreatedAt {
+			candidate := t
+			best = &candidate
+		}
+	}
+	if best == nil {
+		return nil, fmt.Errorf("no tasks found for solution %s", solutionID)
+	}
+	return best, nil
+}
+
 // UpdateTaskStatus обновляет статус задачи
 func (h *handler) UpdateTaskStatus(ctx context.Context, taskID string, status TaskStatus) error {
 	client, err := h.firebaseApp.Firestore(ctx)

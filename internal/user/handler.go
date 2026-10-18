@@ -385,6 +385,14 @@ func (h *handler) UploadSolutionFile(w http.ResponseWriter, r *http.Request, ps 
 	}
 	h.logger.Infof("Created task record with ID %s for user %s, solution %s", taskID, uid, solutionID)
 
+	// Статус «в очереди» записываем ДО публикации в очередь: интерфейс сразу
+	// показывает актуальное состояние вместо завершённого прошлого запуска.
+	// Потребитель перезапишет status.json, когда подберёт задачу.
+	if serr := h.writeQueuedStatus(r.Context(), uid, solutionID, taskID); serr != nil {
+		h.logger.Errorf("Failed to write queued status for %s: %v", solutionID, serr)
+		// Не фатально: потребитель опубликует свой статус сам
+	}
+
 	// 6. Отправка ключа в очередь RabbitMQ
 	// Подготавливаем сообщение
 	message := map[string]interface{}{
@@ -929,6 +937,9 @@ func (h *handler) Register(router *httprouter.Router) {
 	router.GET("/api/users/self/solutions/:solutionID/files/*fileKey", h.GetSolutionFile)
 	router.GET("/api/users/self/solutions/:solutionID", h.GetSolutionByID)
 	router.GET("/api/users/self/solutions/:solutionID/status", h.GetSolutionStatus)
+	// История версий результатов (все архивы запусков) и перезапуск расчёта
+	router.GET("/api/users/self/solutions/:solutionID/versions", h.GetSolutionVersions)
+	router.POST("/api/users/self/solutions/:solutionID/rerun", h.RerunSolution)
 
 	// === ОБЩИЕ МАРШРУТЫ ===
 	router.GET("/api/users/self/solutions", h.GetSolutions)
