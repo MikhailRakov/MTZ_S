@@ -13,6 +13,7 @@ import (
 
 	"3dmtzinversionservice/internal/config"
 	"3dmtzinversionservice/internal/middleware"
+	"3dmtzinversionservice/internal/rabbitmq"
 	"3dmtzinversionservice/internal/user"
 	"3dmtzinversionservice/pkg/logging"
 
@@ -21,7 +22,6 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/julienschmidt/httprouter"
-	amqp "github.com/rabbitmq/amqp091-go"
 
 	/////aws
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,8 +34,6 @@ var (
 	ctx         = context.Background()
 	firebaseApp *firebase.App
 	authClient  *auth.Client
-	rabbitConn  *amqp.Connection
-	rabbitCh    *amqp.Channel
 )
 
 // NewS3Client создает клиент S3 с указанными ключами
@@ -135,16 +133,18 @@ func main() {
 
 	//router.GET("//js/config/firebase-config.js", serveFirebaseConfigJS)
 
-	// Маршруты для HTML страниц
-	router.GET("/", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		http.ServeFile(w, r, "front/index.html")
-	})
-	router.GET("/login.html", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		http.ServeFile(w, r, "front/login.html")
-	})
-	router.GET("/dashboard.html", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		http.ServeFile(w, r, "front/dashboard.html")
-	})
+	// Маршруты для HTML страниц.
+	// no-cache обязателен: иначе браузер может смешать старую HTML-разметку
+	// с новыми JS-модулями (или наоборот) после деплоя.
+	serveHTMLNoCache := func(file string) func(http.ResponseWriter, *http.Request, httprouter.Params) {
+		return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			http.ServeFile(w, r, file)
+		}
+	}
+	router.GET("/", serveHTMLNoCache("front/index.html"))
+	router.GET("/login.html", serveHTMLNoCache("front/login.html"))
+	router.GET("/dashboard.html", serveHTMLNoCache("front/dashboard.html"))
 
 	///icon
 
@@ -159,7 +159,13 @@ func main() {
 	router.POST("/auth/firebase/verify", handleFirebaseTokenVerification)
 	cfg := config.GetConfig_app()
 
-	initRabbitMQ()
+	// RabbitMQ с автопереподключением: сервер стартует даже при недоступном
+	// брокере и восстанавливает связь при первом же обращении (виджет
+	// очереди и публикация задач больше не умирают навсегда после обрыва).
+	rabbitMgr := rabbitmq.NewManager(os.Getenv("RABBITMQ_URL"), "calculation_tasks", logger)
+	if _, err := rabbitMgr.Channel(); err != nil {
+		logger.Errorf("RabbitMQ is not available at startup: %v — will reconnect on demand", err)
+	}
 
 	// Создаем rate limiter
 	// 20 запросов в минуту на пользователя
@@ -168,11 +174,10 @@ func main() {
 	logger.Info("Rate limiter initialized: 20 requests per minute per user")
 
 	logger.Info("register user handler")
-	handler := user.NewHandler(logger, firebaseApp, authClient, rabbitCh, s3Client)
+	handler := user.NewHandler(logger, firebaseApp, authClient, rabbitMgr, s3Client)
 	handler.Register(router)
 
-	defer rabbitConn.Close() // Закрываем соединение при завершении
-	defer rabbitCh.Close()
+	defer rabbitMgr.Close() // Закрываем соединение при завершении
 	logger.Info("Starting server...")
 	start(router, cfg)
 
