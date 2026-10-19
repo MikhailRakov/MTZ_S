@@ -297,9 +297,32 @@ export async function showVtrViewer(vtrText, fileName) {
             </div>
         `;
 
-        vtrViewerInstance.init3DVisualization(container, modelData);
-        // Применяем текущие значения слайдеров после инициализации сцены
-        updateRangeFromSlider();
+        // Lazy-init: 3D-рендер создаётся только по кнопке, чтобы не тормозить
+        // открытие решения на мобильных / слабых устройствах.
+        container.innerHTML = '';
+        const totalCells = modelData.nX * modelData.nY * modelData.nZ;
+        const isMobile = ResultViewer._detectMobile();
+        const placeholder = document.createElement('div');
+        placeholder.className = 'vtr-lazy-placeholder';
+        placeholder.innerHTML = `
+            <div class="vtr-lazy-icon">🧊</div>
+            <div class="vtr-lazy-title">3D-модель готова к просмотру</div>
+            <div class="vtr-lazy-info">${modelData.nX}×${modelData.nY}×${modelData.nZ} · ${(totalCells).toLocaleString()} ячеек</div>
+            ${isMobile ? '<div class="vtr-lazy-warn">⚠️ На мобильном устройстве рендер может работать медленнее</div>' : ''}
+            <button type="button" class="btn btn-primary vtr-lazy-btn">🔍 Посмотреть в 3D</button>
+        `;
+        container.appendChild(placeholder);
+
+        let initialized = false;
+        const initRenderer = async () => {
+            if (initialized) return;
+            initialized = true;
+            container.innerHTML = '';
+            await vtrViewerInstance.init3DVisualization(container, modelData);
+            updateRangeFromSlider();
+        };
+
+        placeholder.querySelector('.vtr-lazy-btn').addEventListener('click', initRenderer);
 
     } catch (error) {
         console.error('Ошибка парсинга .vtr файла:', error);
@@ -325,17 +348,142 @@ function formatRho(v) {
 
 // === Вспомогательные функции парсинга VTK XML ===
 
+// === Inline Web Worker для тяжёлых операций парсинга ===
+// Выносит CPU-intensive работу (парсинг чисел из текста, zlib-декомпрессию)
+// из main thread, чтобы не блокировать UI на мобильных / слабых устройствах.
+const _vtrWorkerCode = `
+self.onmessage = async function(e) {
+    const { id, task, data } = e.data;
+    try {
+        if (task === 'parseNumbers') {
+            // Парсинг чисел из текста (ascii format DataArray)
+            const text = data.text;
+            const parts = text.trim().split(/\\s+/);
+            const result = new Float64Array(parts.length);
+            for (let i = 0; i < parts.length; i++) result[i] = +parts[i];
+            self.postMessage({ id, buffer: result.buffer }, [result.buffer]);
+        } else if (task === 'decompress') {
+            // Zlib-декомпрессия через DecompressionStream
+            const bytes = new Uint8Array(data.bytes);
+            const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+            const buffer = await new Response(stream).arrayBuffer();
+            self.postMessage({ id, buffer }, [buffer]);
+        } else if (task === 'typedConvert') {
+            // Конвертация ArrayBuffer в нужный TypedArray → Float64Array
+            const buf = data.buffer;
+            const type = data.type;
+            let arr;
+            switch (type) {
+                case 'Float64': case 'Double':
+                    arr = new Float64Array(buf); break;
+                case 'Int32':
+                    arr = new Int32Array(buf); break;
+                case 'Float32': case 'Float': default:
+                    arr = new Float32Array(buf); break;
+            }
+            const out = new Float64Array(arr.length);
+            for (let i = 0; i < arr.length; i++) out[i] = arr[i];
+            self.postMessage({ id, buffer: out.buffer }, [out.buffer]);
+        }
+    } catch (err) {
+        self.postMessage({ id, error: err.message || String(err) });
+    }
+};
+`;
+
+let _vtrWorker = null;
+let _vtrWorkerReqId = 0;
+const _vtrWorkerCallbacks = new Map();
+
+function _getVtrWorker() {
+    if (_vtrWorker) return _vtrWorker;
+    try {
+        const blob = new Blob([_vtrWorkerCode], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        _vtrWorker = new Worker(url);
+        URL.revokeObjectURL(url);
+        _vtrWorker.onmessage = (e) => {
+            const { id, buffer, error } = e.data;
+            const cb = _vtrWorkerCallbacks.get(id);
+            if (cb) {
+                _vtrWorkerCallbacks.delete(id);
+                if (error) cb.reject(new Error(error));
+                else cb.resolve(buffer);
+            }
+        };
+        _vtrWorker.onerror = (err) => {
+            console.warn('[VTR WORKER] Worker error, falling back to main thread:', err);
+            _vtrWorker.terminate();
+            _vtrWorker = null;
+            // Reject all pending
+            for (const [id, cb] of _vtrWorkerCallbacks) {
+                cb.reject(new Error('Worker terminated'));
+            }
+            _vtrWorkerCallbacks.clear();
+        };
+        return _vtrWorker;
+    } catch (err) {
+        console.warn('[VTR WORKER] Cannot create worker, using main thread:', err);
+        return null;
+    }
+}
+
+function _workerTask(task, data, transferables) {
+    return new Promise((resolve, reject) => {
+        const worker = _getVtrWorker();
+        if (!worker) { reject(new Error('No worker')); return; }
+        const id = ++_vtrWorkerReqId;
+        _vtrWorkerCallbacks.set(id, { resolve, reject });
+        worker.postMessage({ id, task, data }, transferables || []);
+    });
+}
+
+/** Парсит числа из текста в worker (fallback: main thread). */
+async function parseNumbersInWorker(text) {
+    try {
+        const buf = await _workerTask('parseNumbers', { text });
+        return new Float64Array(buf);
+    } catch (_) {
+        // Fallback: main thread
+        return text.trim().split(/\s+/).filter(Boolean).map(Number);
+    }
+}
+
+/** Декомпрессия zlib в worker (fallback: main thread). */
+async function decompressInWorker(bytes) {
+    try {
+        const copy = new Uint8Array(bytes); // can't transfer shared buffer
+        const buf = await _workerTask('decompress', { bytes: copy.buffer }, [copy.buffer]);
+        return new Uint8Array(buf);
+    } catch (_) {
+        return decompressZlib(bytes);
+    }
+}
+
+/** Конвертация typed array в worker (fallback: main thread). */
+async function typedConvertInWorker(buffer, type) {
+    try {
+        const copy = buffer.slice(0);
+        const buf = await _workerTask('typedConvert', { buffer: copy, type }, [copy]);
+        return Array.from(new Float64Array(buf));
+    } catch (_) {
+        return typedArrayToArray(buffer, type);
+    }
+}
+
 // Читает DataArray в зависимости от формата: ascii, binary (inline base64), appended.
 // Если у элемента есть атрибут compressor (например, "vtkZLibDataCompressor") —
 // либо на самом DataArray, либо на корневом <VTKFile>, — данные лежат в формате
 // сжатых блоков VTK и читаются отдельно.
+// Тяжёлые операции (парсинг чисел, декомпрессия) вынесены в Web Worker.
 function readDataArray(el, doc, fileCompressor) {
     const format = el.getAttribute('format') || 'ascii';
     const type = el.getAttribute('type') || 'Float32';
     const compressor = el.getAttribute('compressor') || fileCompressor;
 
     if (format === 'ascii') {
-        return el.textContent.trim().split(/\s+/).filter(Boolean).map(Number);
+        // Тяжёлая операция — вынесена в Web Worker для неблокирующего UI
+        return parseNumbersInWorker(el.textContent);
     }
 
     if (format === 'binary') {
@@ -373,7 +521,7 @@ function decodeBlock(bytes, type) {
     // Копируем в новый буфер, чтобы гарантировать выравнивание для TypedArray
     const data = bytes.buffer.slice(bytes.byteOffset + 4, bytes.byteOffset + 4 + dataSize);
 
-    return typedArrayToArray(data, type);
+    return typedConvertInWorker(data, type);
 }
 
 function typedArrayToArray(buffer, type) {
@@ -432,7 +580,7 @@ async function readCompressedDataArray(bytes, type) {
         outOffset += decompressed.length;
     }
 
-    return typedArrayToArray(result.buffer, type);
+    return typedConvertInWorker(result.buffer, type);
 }
 
 // Декодирует zlib-обёртку (0x78 0x9c/0x01/0x5e и т.п.) через браузерный DecompressionStream.

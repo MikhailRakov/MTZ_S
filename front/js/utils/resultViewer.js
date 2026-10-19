@@ -5,74 +5,17 @@
 // хранится матрица (центр + размер) и цвет. Ячейки вне текущего
 // диапазона сопротивления прячутся scale=0, что даёт чёткую картину
 // аномалий. Поверх можно включить опциональный wireframe-оверлей.
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+//
+// Three.js загружается лениво (dynamic import) — только при первом вызове
+// init3DVisualization(). Это экономит ~600 KB в начальной загрузке страницы.
 
-// === Научные палитры ===
-// Каждая функция принимает t ∈ [0, 1] и возвращает [r, g, b] в [0, 1].
-// Применяется на log10(rho), нормированном в текущий видимый диапазон.
-
-const colormaps = {
-    jet(t) {
-        // blue (низкое) -> cyan -> green -> yellow -> red (высокое)
-        let r, g, b;
-        if (t < 0.25) {
-            const k = t / 0.25;
-            r = 0; g = k * 0.5; b = 1;
-        } else if (t < 0.5) {
-            const k = (t - 0.25) / 0.25;
-            r = 0; g = 0.5 + k * 0.5; b = 1 - k;
-        } else if (t < 0.75) {
-            const k = (t - 0.5) / 0.25;
-            r = k; g = 1; b = 0;
-        } else {
-            const k = (t - 0.75) / 0.25;
-            r = 1; g = 1 - k; b = 0;
-        }
-        return [r, g, b];
-    },
-
-    viridis(t) {
-        // Полиномиальная аппроксимация matplotlib viridis
-        // (оригинал — численные коэффициенты из mpl colormaps)
-        const c0 = [0.267004, 0.004874, 0.329415];
-        const c1 = [0.282623, 0.140926, 0.457517];
-        const c2 = [0.253935, 0.265254, 0.529983];
-        const c3 = [0.163625, 0.471133, 0.558148];
-        const c4 = [0.134692, 0.658636, 0.517649];
-        const c5 = [0.477504, 0.821444, 0.318195];
-        const c6 = [0.993248, 0.906157, 0.143936];
-        const stops = [c0, c1, c2, c3, c4, c5, c6];
-        const idx = t * (stops.length - 1);
-        const i = Math.min(stops.length - 2, Math.floor(idx));
-        const f = idx - i;
-        const a = stops[i], b = stops[i + 1];
-        return [
-            a[0] + (b[0] - a[0]) * f,
-            a[1] + (b[1] - a[1]) * f,
-            a[2] + (b[2] - a[2]) * f,
-        ];
-    },
-
-    hot(t) {
-        // black -> red -> yellow -> white
-        const r = Math.min(1, 3 * t);
-        const g = Math.min(1, Math.max(0, 3 * t - 1));
-        const b = Math.min(1, Math.max(0, 3 * t - 2));
-        return [r, g, b];
-    },
-
-    cool(t) {
-        // cyan -> magenta (cosine-палитра)
-        return [t, 1 - t, 1];
-    },
-
-    gray(t) {
-        return [t, t, t];
-    },
-};
-
-const COLORMAP_NAMES = Object.keys(colormaps);
+// Colormaps вынесены в отдельный модуль
+import { colormaps, COLORMAP_NAMES } from './colormaps.js';
+import { createCoordinateAxes, disposeCoordinateAxes } from './coordinateAxes.js';
+import { loadThree } from './threeLoader.js';
+import { buildWireframe } from './wireframeBuilder.js';
+import { calculatePositions as sharedCalculatePositions } from './gridUtils.js';
+import { createLegend, updateLegend, removeLegend, formatRho } from './colorScaleLegend.js';
 
 export class ResultViewer {
     constructor() {
@@ -99,8 +42,8 @@ export class ResultViewer {
         this._cellSizes = null;     // Float32Array [sx,sy,sz, ...]
         this._logRho = null;        // Float32Array — log10(rho) для каждой ячейки
         this._valid = null;         // Uint8Array — 1, если rho>0 и конечно
-        this._tmpMatrix = new THREE.Matrix4();
-        this._tmpColor = new THREE.Color();
+        this._tmpMatrix = null;     // THREE.Matrix4 (создаётся в _ensureThree)
+        this._tmpColor = null;      // THREE.Color (создаётся в _ensureThree)
 
         // Границы сетки в координатах сцены (для DDA-пика) и глубины слоёв
         this._boundsX = null;       // [nY+1] scene X (восток, из yCells)
@@ -124,6 +67,41 @@ export class ResultViewer {
         this._strokeCells = null;   // ячейки текущей кисти (коммитятся на pointerup)
         this._raycaster = null;
         this._editHandlers = null;
+
+        // === Оптимизации для мобильных / больших моделей ===
+        this._isMobile = ResultViewer._detectMobile();
+        this._resizeTimer = null;
+        this._lastRaycastTime = 0;
+        this._raycastThrottleMs = this._isMobile ? 50 : 16; // 20 fps на мобильных, 60 на десктопе
+        this._animationId = null;
+    }
+
+    /** Определение мобильного устройства (touch + маленький экран или UA). */
+    static _detectMobile() {
+        if (typeof navigator === 'undefined') return false;
+        const ua = navigator.userAgent || '';
+        const isTouchPrimary = typeof matchMedia !== 'undefined' &&
+            matchMedia('(pointer: coarse)').matches;
+        const isSmallScreen = typeof window !== 'undefined' &&
+            Math.min(window.screen?.width || 9999, window.screen?.height || 9999) < 900;
+        const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+        return (isTouchPrimary && isSmallScreen) || isMobileUA;
+    }
+
+    /**
+     * Ленивая загрузка Three.js (общий загрузчик ./threeLoader.js).
+     * Вызывается один раз перед первым использованием.
+     * Возвращает { THREE, OrbitControls }.
+     */
+    async _ensureThree() {
+        if (this._THREE) return { THREE: this._THREE, OrbitControls: this._OrbitControls };
+        const { THREE, OrbitControls } = await loadThree();
+        this._THREE = THREE;
+        this._OrbitControls = OrbitControls;
+        // Создаём переиспользуемые объекты
+        this._tmpMatrix = new THREE.Matrix4();
+        this._tmpColor = new THREE.Color();
+        return { THREE: this._THREE, OrbitControls: this._OrbitControls };
     }
 
     // === Парсинг (оставлен для совместимости с coarse-интеграцией) ===
@@ -181,10 +159,13 @@ export class ResultViewer {
     }
 
     // === Инициализация 3D-сцены ===
-    init3DVisualization(containerElement, modelData) {
+    async init3DVisualization(containerElement, modelData) {
         if (!modelData || !Array.isArray(modelData.rhoValues)) {
             throw new Error('modelData.rhoValues отсутствует или не массив — обновите страницу (Ctrl+Shift+R), возможно браузер использует кэш старых модулей');
         }
+
+        // Ленивая загрузка Three.js (~600 KB загружается только здесь)
+        const { THREE, OrbitControls } = await this._ensureThree();
         this.modelData = modelData;
         this._prepareCellCache(modelData);
 
@@ -195,23 +176,32 @@ export class ResultViewer {
         const width = containerElement.clientWidth;
         const height = containerElement.clientHeight;
 
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x0a0a0f);
+        this.scene = new this._THREE.Scene();
+        this.scene.background = new this._THREE.Color(0x0a0a0f);
 
         const xExtent = modelData.xCells.reduce((a, b) => a + b, 0);
         const yExtent = modelData.yCells.reduce((a, b) => a + b, 0);
         const zExtent = modelData.zCells.reduce((a, b) => a + b, 0);
         const maxExtent = Math.max(xExtent, yExtent, zExtent);
 
-        this.camera = new THREE.PerspectiveCamera(50, width / height, maxExtent * 0.01, maxExtent * 10);
+        this.camera = new this._THREE.PerspectiveCamera(50, width / height, maxExtent * 0.01, maxExtent * 10);
         const cameraDistance = maxExtent * 1.8;
         this.camera.position.set(cameraDistance * 0.8, cameraDistance * 0.8, cameraDistance * 1.0);
         this.camera.lookAt(0, 0, -zExtent * 0.3);
         this.camera.up.set(0, 0, 1);
 
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        // Оптимизации рендера для мобильных / больших моделей
+        const totalCells = modelData.nX * modelData.nY * modelData.nZ;
+        const useAntialias = !this._isMobile && totalCells < 50000;
+        const maxPixelRatio = this._isMobile ? 1.0 : (totalCells > 50000 ? 1.5 : 2);
+
+        this.renderer = new this._THREE.WebGLRenderer({
+            antialias: useAntialias,
+            alpha: true,
+            powerPreference: this._isMobile ? 'low-power' : 'high-performance',
+        });
         this.renderer.setSize(width, height);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxPixelRatio));
         containerElement.innerHTML = '';
         containerElement.appendChild(this.renderer.domElement);
 
@@ -220,29 +210,48 @@ export class ResultViewer {
         this.controls.dampingFactor = 0.08;
         this.controls.maxDistance = maxExtent * 5;
         this.controls.minDistance = maxExtent * 0.1;
+        // На мобильных отключаем инерцию вращения для экономии CPU
+        if (this._isMobile) {
+            this.controls.enableDamping = false;
+        }
 
         // Тусклый ambient — заливка ячеек не использует свет, но он нужен
         // для возможного wireframe-оверлея (LineBasicMaterial не зависит
         // от света, но если в будущем добавим MeshNormalMaterial — будет готов).
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        const ambientLight = new this._THREE.AmbientLight(0xffffff, 0.6);
         this.scene.add(ambientLight);
 
         this.addModelToScene(modelData);
+        this._addCoordinateAxes(modelData);
         this.addColorScale(containerElement);
 
+        // Throttled animation loop — на мобильных рендерим только при движении камеры
+        let needsRender = true;
+        this.controls.addEventListener('change', () => { needsRender = true; });
+
         const animate = () => {
-            requestAnimationFrame(animate);
+            this._animationId = requestAnimationFrame(animate);
             this.controls.update();
-            this.renderer.render(this.scene, this.camera);
+            if (needsRender || !this._isMobile) {
+                this.renderer.render(this.scene, this.camera);
+                needsRender = false;
+            }
         };
         animate();
 
+        // Debounced resize — не пересоздаём renderer на каждый пиксель
         const handleResize = () => {
-            const newWidth = containerElement.clientWidth;
-            const newHeight = containerElement.clientHeight;
-            this.camera.aspect = newWidth / newHeight;
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(newWidth, newHeight);
+            if (this._resizeTimer) clearTimeout(this._resizeTimer);
+            this._resizeTimer = setTimeout(() => {
+                const newWidth = containerElement.clientWidth;
+                const newHeight = containerElement.clientHeight;
+                if (newWidth > 0 && newHeight > 0) {
+                    this.camera.aspect = newWidth / newHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(newWidth, newHeight);
+                    needsRender = true;
+                }
+            }, 150);
         };
         window.addEventListener('resize', handleResize);
         this.resizeHandler = handleResize;
@@ -336,8 +345,8 @@ export class ResultViewer {
         const { nX, nY, nZ } = modelData;
         const total = nX * nY * nZ;
 
-        const boxGeom = new THREE.BoxGeometry(1, 1, 1);
-        const material = new THREE.MeshBasicMaterial({
+        const boxGeom = new this._THREE.BoxGeometry(1, 1, 1);
+        const material = new this._THREE.MeshBasicMaterial({
             // ВАЖНО: для InstancedMesh.instanceColor параметр vertexColors
             // НЕ нужен (и вреден) — Three.js включает USE_INSTANCING_COLOR
             // автоматически по наличию атрибута instanceColor. Если же
@@ -347,12 +356,12 @@ export class ResultViewer {
             color: 0xffffff,
             transparent: true,
             opacity: this.settings.opacity,
-            side: THREE.DoubleSide,
+            side: this._THREE.DoubleSide,
             depthWrite: this.settings.opacity >= 0.999,
         });
 
-        this.modelMesh = new THREE.InstancedMesh(boxGeom, material, total);
-        this.modelMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this.modelMesh = new this._THREE.InstancedMesh(boxGeom, material, total);
+        this.modelMesh.instanceMatrix.setUsage(this._THREE.DynamicDrawUsage);
         // instanceColor заведётся ленивым setColorAt в _rebuildAllInstances
         this._rebuildAllInstances();
 
@@ -507,12 +516,12 @@ export class ResultViewer {
             const x = this._boundsX[j];
             positions.push(x, y0, zTop, x, y1, zTop);
         }
-        const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        const mat = new THREE.LineBasicMaterial({
+        const geom = new this._THREE.BufferGeometry();
+        geom.setAttribute('position', new this._THREE.Float32BufferAttribute(positions, 3));
+        const mat = new this._THREE.LineBasicMaterial({
             color: 0x8be9fd, transparent: true, opacity: 0.4, depthTest: false,
         });
-        const lines = new THREE.LineSegments(geom, mat);
+        const lines = new this._THREE.LineSegments(geom, mat);
         lines.renderOrder = 996; // под выделением (998) и hover (999)
         return lines;
     }
@@ -553,15 +562,15 @@ export class ResultViewer {
         this.selection = new Set();
         this._strokeCells = null;
         this._hoverIdx = -1;
-        this._raycaster = new THREE.Raycaster();
-        this._ndcVec = new THREE.Vector2();
+        this._raycaster = new this._THREE.Raycaster();
+        this._ndcVec = new this._THREE.Vector2();
 
         // Подсветка ячейки под курсором — белый контур
-        const hoverGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
-        const hoverMat = new THREE.LineBasicMaterial({
+        const hoverGeo = new this._THREE.EdgesGeometry(new this._THREE.BoxGeometry(1, 1, 1));
+        const hoverMat = new this._THREE.LineBasicMaterial({
             color: 0xffffff, depthTest: false, transparent: true, opacity: 0.9,
         });
-        this._hoverBox = new THREE.LineSegments(hoverGeo, hoverMat);
+        this._hoverBox = new this._THREE.LineSegments(hoverGeo, hoverMat);
         this._hoverBox.visible = false;
         this._hoverBox.renderOrder = 999;
         this.scene.add(this._hoverBox);
@@ -569,9 +578,9 @@ export class ResultViewer {
         // Подсветка выбранных ячеек — ядовито-пурпурные контуры (единая геометрия).
         // Magenta (0xff00ff) отсутствует в палитре jet (blue→cyan→green→yellow→red),
         // поэтому выделение контрастно на фоне ячеек любого сопротивления.
-        this._selectionLines = new THREE.LineSegments(
-            new THREE.BufferGeometry(),
-            new THREE.LineBasicMaterial({
+        this._selectionLines = new this._THREE.LineSegments(
+            new this._THREE.BufferGeometry(),
+            new this._THREE.LineBasicMaterial({
                 color: 0xff00ff, depthTest: false, transparent: true, opacity: 1.0,
             })
         );
@@ -839,8 +848,8 @@ export class ResultViewer {
             for (const [a, b] of p) verts.push(...a, ...b);
         }
         this._selectionLines.geometry.dispose();
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        const geo = new this._THREE.BufferGeometry();
+        geo.setAttribute('position', new this._THREE.Float32BufferAttribute(verts, 3));
         this._selectionLines.geometry = geo;
         if (this._editOptions.onSelectionChanged) {
             this._editOptions.onSelectionChanged(this.selection.size);
@@ -849,6 +858,11 @@ export class ResultViewer {
 
     // --- Обработчики указателя ---
     _onEditPointerMove(e) {
+        // Throttle: на мобильных ограничиваем частоту raycast до _raycastThrottleMs
+        const now = performance.now();
+        if (now - this._lastRaycastTime < this._raycastThrottleMs) return;
+        this._lastRaycastTime = now;
+
         // hover — с троттлингом на requestAnimationFrame
         this._lastMoveEvent = e;
         if (this._hoverRafPending) return;
@@ -1006,142 +1020,53 @@ export class ResultViewer {
     // ================================================================
 
     // === Wireframe-оверлей ===
-    // Строит контурную сетку, как в предыдущей версии, но отдельным объектом.
+    // Реализация вынесена в ./wireframeBuilder.js
     _buildWireframe(modelData) {
-        const { nX, nY, nZ, xCells, yCells, zCells } = modelData;
-        const eastPositions = this.calculatePositions(yCells);
-        const northPositions = this.calculatePositions(xCells);
-        const zPositions = this.calculatePositions(zCells);
-        const eastOffset = -(eastPositions[eastPositions.length - 1] / 2);
-        const northOffset = -(northPositions[northPositions.length - 1] / 2);
-
-        const vertices = [];
-        const colors = [];
-        const xStep = Math.max(1, Math.floor(nX / 30));
-        const yStep = Math.max(1, Math.floor(nY / 30));
-        const zLayers = [0, 2, 5, 10, 15, 20, 30, Math.floor(nZ * 0.7), Math.floor(nZ - 1)];
-
-        for (const k of zLayers) {
-            if (k >= nZ) continue;
-            for (let i = 0; i < nX; i += xStep) {
-                for (let j = 0; j < nY; j += yStep) {
-                    const x1 = eastPositions[j] + eastOffset;
-                    const x2 = eastPositions[j + 1] + eastOffset;
-                    const y1 = northPositions[i] + northOffset;
-                    const y2 = northPositions[i + 1] + northOffset;
-                    const z1 = -zPositions[k];
-                    const z2 = -zPositions[k + 1];
-                    this._addCubeWireframe(vertices, colors, x1, x2, y1, y2, z1, z2, [0.8, 0.85, 0.9]);
-                }
-            }
-        }
-
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-        const material = new THREE.LineBasicMaterial({
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.5,
-        });
-        return new THREE.LineSegments(geometry, material);
+        return buildWireframe(this._THREE, modelData);
     }
 
-    _addCubeWireframe(vertices, colors, x1, x2, y1, y2, z1, z2, color) {
-        const addLine = (p1, p2) => {
-            vertices.push(...p1, ...p2);
-            colors.push(...color, ...color);
-        };
-        // Bottom face
-        addLine([x1, y1, z1], [x2, y1, z1]);
-        addLine([x2, y1, z1], [x2, y2, z1]);
-        addLine([x2, y2, z1], [x1, y2, z1]);
-        addLine([x1, y2, z1], [x1, y1, z1]);
-        // Top face
-        addLine([x1, y1, z2], [x2, y1, z2]);
-        addLine([x2, y1, z2], [x2, y2, z2]);
-        addLine([x2, y2, z2], [x1, y2, z2]);
-        addLine([x1, y2, z2], [x1, y1, z2]);
-        // Vertical edges
-        addLine([x1, y1, z1], [x1, y1, z2]);
-        addLine([x2, y2, z1], [x2, y2, z2]);
+    // === Координатные оси с отметками ===
+    // Реализация вынесена в ./coordinateAxes.js (общая с CoarseGenerator).
+    _addCoordinateAxes(modelData) {
+        if (!this._THREE || !this.scene) return;
+
+        const xExtent = modelData.yCells.reduce((a, b) => a + b, 0); // scene X = East
+        const yExtent = modelData.xCells.reduce((a, b) => a + b, 0); // scene Y = North
+        const zExtent = modelData.zCells.reduce((a, b) => a + b, 0);
+
+        this._axesGroup = createCoordinateAxes(this._THREE, { xExtent, yExtent, zExtent });
+        this.scene.add(this._axesGroup);
     }
 
-    // === Цветовая шкала-легенда ===
+    // === Цветовая шкала-легенда (реализация в ./colorScaleLegend.js) ===
     addColorScale(containerElement) {
         if (!this.colorScale) return;
-        const legend = document.createElement('div');
-        legend.className = 'result-viewer-legend';
-        legend.innerHTML = `
-            <div class="legend-title">Удельное сопротивление (Ω·м)</div>
-            <div class="color-scale-bar"></div>
-            <div class="color-scale-labels">
-                <span class="cs-min">${this.colorScale.minRho.toFixed(1)}</span>
-                <span class="cs-mid"></span>
-                <span class="cs-max">${this.colorScale.maxRho.toFixed(1)}</span>
-            </div>
-            <div class="legend-meta">
-                <span>Палитра: <strong class="cs-palette">${this.colorScale.paletteName}</strong></span>
-                <span>Всего: <strong class="cs-visible">—</strong> / <span class="cs-total">—</span></span>
-            </div>
-        `;
-        containerElement.appendChild(legend);
-        this._legendEl = legend;
+        this._legendEl = createLegend(containerElement, this.colorScale);
         this._updateColorScaleLegend();
     }
 
     _updateColorScaleLegend() {
-        if (!this._legendEl || !this.colorScale) return;
-        const { minRho, maxRho, dataMin, dataMax, paletteName } = this.colorScale;
-        const bar = this._legendEl.querySelector('.color-scale-bar');
-        if (bar) {
-            // Градиент по выбранной палитре. Длина по 64 точкам.
-            const palette = colormaps[paletteName] || colormaps.jet;
-            const stops = [];
-            for (let i = 0; i <= 16; i++) {
-                const t = i / 16;
-                const [r, g, b] = palette(t);
-                const rr = Math.round(r * 255), gg = Math.round(g * 255), bb = Math.round(b * 255);
-                stops.push(`rgb(${rr},${gg},${bb}) ${(t * 100).toFixed(1)}%`);
-            }
-            bar.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
-        }
-        const minEl = this._legendEl.querySelector('.cs-min');
-        const maxEl = this._legendEl.querySelector('.cs-max');
-        const midEl = this._legendEl.querySelector('.cs-mid');
-        if (minEl) minEl.textContent = formatRho(minRho);
-        if (maxEl) maxEl.textContent = formatRho(maxRho);
-        if (midEl) midEl.textContent = formatRho(Math.sqrt(minRho * maxRho));
-        const palEl = this._legendEl.querySelector('.cs-palette');
-        if (palEl) palEl.textContent = paletteName;
-
-        // Сколько ячеек попадает в текущий диапазон
-        const logMin = Math.log10(minRho);
-        const logMax = Math.log10(maxRho);
-        let visible = 0;
-        const total = this._logRho.length;
-        for (let i = 0; i < total; i++) {
-            if (!this._valid[i]) continue;
-            const lr = this._logRho[i];
-            if (lr >= logMin && lr <= logMax) visible++;
-        }
-        const visEl = this._legendEl.querySelector('.cs-visible');
-        const totEl = this._legendEl.querySelector('.cs-total');
-        if (visEl) visEl.textContent = visible.toLocaleString();
-        if (totEl) totEl.textContent = total.toLocaleString();
+        updateLegend(this._legendEl, this.colorScale, this._logRho, this._valid);
     }
 
     // === Утилиты ===
     calculatePositions(cells) {
-        const positions = [0];
-        let cumulative = 0;
-        for (const cell of cells) cumulative += cell, positions.push(cumulative);
-        return positions;
+        return sharedCalculatePositions(cells);
     }
 
     dispose() {
         // Выключаем редактирование (снимает обработчики и удаляет подсветку)
         this.disableEditing();
+        // Останавливаем animation loop
+        if (this._animationId != null) {
+            cancelAnimationFrame(this._animationId);
+            this._animationId = null;
+        }
+        // Очищаем debounced resize timer
+        if (this._resizeTimer) {
+            clearTimeout(this._resizeTimer);
+            this._resizeTimer = null;
+        }
         if (this.renderer) this.renderer.dispose();
         if (this.controls) this.controls.dispose();
         if (this.modelMesh) {
@@ -1153,10 +1078,14 @@ export class ResultViewer {
             this.wireframeMesh.material.dispose();
         }
         this._disposeLayerGrid();
-        this.layerFilter = null;
-        if (this._legendEl && this._legendEl.parentNode) {
-            this._legendEl.parentNode.removeChild(this._legendEl);
+        // Очистка осей координат (общая функция из coordinateAxes.js)
+        if (this._axesGroup) {
+            this.scene.remove(this._axesGroup);
+            disposeCoordinateAxes(this._THREE, this._axesGroup);
+            this._axesGroup = null;
         }
+        this.layerFilter = null;
+        removeLegend(this._legendEl);
         this._legendEl = null;
         this._cellCenters = null;
         this._cellSizes = null;
@@ -1172,363 +1101,6 @@ export class ResultViewer {
     }
 }
 
-// Форматирует значение сопротивления для подписей шкалы:
-// < 10 — один знак, 10..1000 — без дробной, остальное — экспонента.
-function formatRho(v) {
-    if (!isFinite(v) || v <= 0) return '—';
-    if (v < 10) return v.toFixed(2);
-    if (v < 100) return v.toFixed(1);
-    if (v < 1000) return v.toFixed(0);
-    if (v < 10000) return v.toFixed(0);
-    return v.toExponential(1);
-}
+// showVolumeModal вынесен в ./volumeModal.js
+export { showVolumeModal } from './volumeModal.js';
 
-// === Модальное окно объёмного просмотра модели ===
-// Переиспользует стиль готовых решений (файл-viewer-modal + ResultViewer):
-// тот же модальный шаблон, легенда, статистика и OrbitControls.
-// modelData — объект формата { nX, nY, nZ, xCells, yCells, zCells, rhoValues }
-// (см. buildSimpegModelData в simpegProfilesConverter.js).
-//
-// options.editing (опционально) включает режим правки сопротивлений ячеек:
-// {
-//   defaultRho: фоновое ρ (для сброса),
-//   onCellsEdited(indices, rho): вызывается после правки ячеек,
-//   getModifiedCount(): сколько ячеек отличается от фона — для счётчика в панели
-// }
-let _volumeViewerInstance = null;
-
-export function showVolumeModal(modelData, title = 'Объёмная модель', options = {}) {
-    const editing = options.editing || null;
-    const defaultRho = editing && editing.defaultRho > 0 ? editing.defaultRho : 100;
-
-    const modal = document.createElement('div');
-    modal.className = 'file-viewer-modal result-viewer-modal-large';
-    modal.innerHTML = `
-        <div class="file-viewer-content result-viewer-content-large">
-            <div class="file-viewer-header">
-                <h3>📊 ${title}</h3>
-                <button class="file-viewer-close">&times;</button>
-            </div>
-            <div class="file-viewer-body">
-                <div class="volume-3d-container" style="width: 100%; height: ${editing ? '55vh' : '70vh'}; position: relative;"></div>
-                ${editing ? `
-                <div class="volume-edit-toolbar" id="volume-edit-toolbar">
-                    <div class="edit-row">
-                        <span class="edit-group-label">✏️ Априорная информация</span>
-                        <label class="edit-radio"><input type="radio" name="volume-edit-mode" value="paint" checked> 🖌 Кисть</label>
-                        <label class="edit-radio"><input type="radio" name="volume-edit-mode" value="select"> ☑ Выделение</label>
-                        <span class="edit-sep"></span>
-                        <label class="edit-field">ρ =
-                            <input type="number" id="volume-edit-rho" min="0.01" step="any" value="${defaultRho}">
-                            <span class="edit-unit">Ом·м</span>
-                        </label>
-                        <label class="edit-check"><input type="checkbox" id="volume-edit-column"> вся колонка Z</label>
-                    </div>
-                    <div class="edit-row">
-                        <span class="edit-group-label">🗂 Слой Z</span>
-                        <label class="edit-check" title="Показывать и редактировать только выбранный слой; остальные скрыты и некликабельны"><input type="checkbox" id="volume-edit-layer-on"> только этот слой</label>
-                        <input type="range" class="edit-layer-slider" id="volume-edit-layer" min="0" max="${Math.max(0, modelData.nZ - 1)}" step="1" value="0" title="Номер слоя: 0 — верхний (у поверхности)">
-                        <span class="edit-layer-info" id="volume-edit-layer-info">—</span>
-                        <span class="edit-sep"></span>
-                        <label class="edit-check" title="Линии границ ячеек всей модели"><input type="checkbox" id="volume-edit-grid"> показать сетку</label>
-                    </div>
-                    <div class="edit-row">
-                        <span class="edit-group-label" title="Показывать только ячейки с ρ в выбранном диапазоне; скрытые ячейки не кликабельны">🔍 Фильтр ρ</span>
-                        <div class="edit-range-wrap">
-                            <div class="edit-range-labels">
-                                <span id="volume-edit-range-min-label">—</span>
-                                <span class="edit-range-hint" id="volume-edit-range-hint">—</span>
-                                <span id="volume-edit-range-max-label">—</span>
-                            </div>
-                            <div class="range-slider">
-                                <div class="range-track"></div>
-                                <div class="range-fill" id="volume-edit-range-fill"></div>
-                                <input type="range" class="range-input range-min" id="volume-edit-range-min" min="0" max="10000" step="1" value="0" />
-                                <input type="range" class="range-input range-max" id="volume-edit-range-max" min="0" max="10000" step="1" value="10000" />
-                            </div>
-                        </div>
-                        <button type="button" class="btn btn-sm btn-secondary" id="volume-edit-range-reset" title="Показать ячейки всего диапазона сопротивлений">Весь диапазон</button>
-                    </div>
-                    <div class="edit-row">
-                        <button type="button" class="btn btn-sm" id="volume-edit-apply" disabled>Применить к выделенным</button>
-                        <button type="button" class="btn btn-sm btn-secondary" id="volume-edit-clear">Снять выделение</button>
-                        <button type="button" class="btn btn-sm btn-danger-ghost" id="volume-edit-reset">↺ Сбросить все изменения</button>
-                        <span class="edit-counter" id="volume-edit-count">Изменено ячеек: 0</span>
-                    </div>
-                    <div class="edit-row edit-hover-row" id="volume-edit-hover">
-                        Наведите курсор на ячейку…
-                    </div>
-                </div>` : ''}
-                <div class="volume-stats" style="margin-top: 16px; padding: 12px; background: var(--color-bg-secondary); border-radius: var(--radius-md);"></div>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-
-    const container = modal.querySelector('.volume-3d-container');
-    const statsDiv = modal.querySelector('.volume-stats');
-
-    try {
-        if (_volumeViewerInstance) {
-            _volumeViewerInstance.dispose();
-            _volumeViewerInstance = null;
-        }
-
-        _volumeViewerInstance = new ResultViewer();
-        _volumeViewerInstance.init3DVisualization(container, modelData);
-
-        // === Панель редактирования ===
-        if (editing) {
-            const viewer = _volumeViewerInstance;
-            const rhoInput = modal.querySelector('#volume-edit-rho');
-            const countEl = modal.querySelector('#volume-edit-count');
-            const hoverEl = modal.querySelector('#volume-edit-hover');
-            const applyBtn = modal.querySelector('#volume-edit-apply');
-
-            const updateCount = () => {
-                const n = editing.getModifiedCount ? editing.getModifiedCount() : 0;
-                countEl.textContent = `Изменено ячеек: ${n.toLocaleString('ru-RU')}`;
-                countEl.classList.toggle('has-edits', n > 0);
-            };
-
-            viewer.enableEditing({
-                defaultRho,
-                brushRho: parseFloat(rhoInput.value) || defaultRho,
-                onCellsEdited: (indices, rho) => {
-                    if (editing.onCellsEdited) {
-                        try {
-                            editing.onCellsEdited(indices, rho);
-                        } catch (err) {
-                            console.error('[VOLUME EDIT] onCellsEdited failed:', err);
-                        }
-                    }
-                    updateCount();
-                    // Правка могла расширить диапазон данных (_ensureRangeIncludes) —
-                    // пересинхронизируем фильтр-слайдер с новыми границами
-                    if (typeof syncRangeUI === 'function') syncRangeUI();
-                },
-                onHoverCell: (info) => {
-                    if (!info) {
-                        hoverEl.textContent = 'Наведите курсор на ячейку…';
-                        return;
-                    }
-                    const dTop = Math.round(info.depthTop).toLocaleString('ru-RU');
-                    const dBot = Math.round(info.depthBottom).toLocaleString('ru-RU');
-                    hoverEl.textContent =
-                        `Ячейка [X:${info.ix}, Y:${info.iy}, Z:${info.iz}] · ` +
-                        `глубина ${dTop}–${dBot} м · ρ = ${formatRho(info.rho)} Ом·м`;
-                },
-                onSelectionChanged: (n) => {
-                    applyBtn.disabled = n === 0;
-                    applyBtn.textContent = n > 0
-                        ? `Применить к выделенным (${n.toLocaleString('ru-RU')})`
-                        : 'Применить к выделенным';
-                },
-            });
-
-            // Режим: кисть / выделение
-            modal.querySelectorAll('input[name="volume-edit-mode"]').forEach(radio => {
-                radio.addEventListener('change', () => {
-                    if (radio.checked) viewer.setEditMode(radio.value);
-                });
-            });
-
-            // Значение кисти
-            rhoInput.addEventListener('input', () => {
-                viewer.setBrushRho(parseFloat(rhoInput.value));
-            });
-
-            // Режим колонки
-            modal.querySelector('#volume-edit-column').addEventListener('change', (e) => {
-                viewer.setColumnMode(e.target.checked);
-            });
-
-            // === Выбор Z-слоя: изоляция + точная правка одного среза ===
-            const layerSlider = modal.querySelector('#volume-edit-layer');
-            const layerOn = modal.querySelector('#volume-edit-layer-on');
-            const layerInfo = modal.querySelector('#volume-edit-layer-info');
-            const fmtM = (v) => Math.round(v).toLocaleString('ru-RU');
-            const updateLayerInfo = () => {
-                const k = parseInt(layerSlider.value, 10);
-                const dr = viewer.getLayerDepthRange(k);
-                layerInfo.innerHTML = dr
-                    ? `<strong>${k + 1}</strong> / ${modelData.nZ} · глубина ${fmtM(dr.top)}–${fmtM(dr.bottom)} м`
-                    : '—';
-            };
-            let layerRaf = 0;
-            layerSlider.addEventListener('input', () => {
-                updateLayerInfo();
-                if (!layerOn.checked) return;
-                // Перестройка 100k+ инстансов недешёвая — не чаще кадра
-                if (layerRaf) return;
-                layerRaf = requestAnimationFrame(() => {
-                    layerRaf = 0;
-                    viewer.setLayerFilter(parseInt(layerSlider.value, 10));
-                });
-            });
-            layerOn.addEventListener('change', () => {
-                viewer.setLayerFilter(layerOn.checked ? parseInt(layerSlider.value, 10) : null);
-            });
-            updateLayerInfo();
-
-            // Сетка границ ячеек всего объёма
-            modal.querySelector('#volume-edit-grid').addEventListener('change', (e) => {
-                viewer.setWireframe(e.target.checked);
-            });
-
-            // === Фильтр сопротивлений (dual range-slider, лог-шкала) ===
-            // Тот же компонент, что в панели VTR-вьюера: внутренние значения
-            // [0..10000] маппятся в [log10(lo), log10(hi)] текущего диапазона данных.
-            const rMinInput = modal.querySelector('#volume-edit-range-min');
-            const rMaxInput = modal.querySelector('#volume-edit-range-max');
-            const rFill = modal.querySelector('#volume-edit-range-fill');
-            const rMinLabel = modal.querySelector('#volume-edit-range-min-label');
-            const rMaxLabel = modal.querySelector('#volume-edit-range-max-label');
-            const rHint = modal.querySelector('#volume-edit-range-hint');
-
-            // Границы лог-шкалы. ВАЖНО: свежая coarse-сетка однородна
-            // (все ρ = defaultRho → dataMin == dataMax), поэтому вырожденный
-            // диапазон расширяем по декаде в обе стороны.
-            const rangeBounds = () => {
-                let lo = viewer.colorScale.dataMin;
-                let hi = viewer.colorScale.dataMax;
-                if (!(hi > lo)) { lo = lo / 10; hi = hi * 10; }
-                return [Math.log10(lo), Math.log10(hi)];
-            };
-
-            const applyRangeFromSlider = () => {
-                const [logLo, logHi] = rangeBounds();
-                const span = (logHi - logLo) || 1;
-                let vMin = parseInt(rMinInput.value, 10);
-                let vMax = parseInt(rMaxInput.value, 10);
-                if (vMin > vMax) [vMin, vMax] = [vMax, vMin]; // не даём меняться местами
-                const minRho = Math.pow(10, logLo + (vMin / 10000) * span);
-                const maxRho = Math.pow(10, logLo + (vMax / 10000) * span);
-                if (maxRho > minRho) viewer.setRange(minRho, maxRho);
-                rFill.style.left = `${vMin / 100}%`;
-                rFill.style.width = `${(vMax - vMin) / 100}%`;
-                rMinLabel.textContent = formatRho(minRho);
-                rMaxLabel.textContent = formatRho(maxRho);
-                rHint.textContent = `${formatRho(minRho)} … ${formatRho(maxRho)} Ω·м`;
-            };
-
-            // Синхронизация ползунков с текущим состоянием viewer
-            // (после правок _ensureRangeIncludes может расширить границы данных)
-            const syncRangeUI = () => {
-                const [logLo, logHi] = rangeBounds();
-                const span = (logHi - logLo) || 1;
-                const toSlider = (rho) => Math.max(0, Math.min(10000,
-                    Math.round(((Math.log10(rho) - logLo) / span) * 10000)));
-                let vMin = toSlider(viewer.settings.minRho);
-                let vMax = toSlider(viewer.settings.maxRho);
-                if (vMin > vMax) [vMin, vMax] = [vMax, vMin];
-                rMinInput.value = vMin;
-                rMaxInput.value = vMax;
-                applyRangeFromSlider();
-            };
-
-            const showFullRange = () => {
-                const [logLo, logHi] = rangeBounds();
-                const lo = Math.pow(10, logLo);
-                const hi = Math.pow(10, logHi);
-                if (hi > lo) viewer.setRange(lo, hi);
-                syncRangeUI();
-            };
-
-            // Перестройка 100k+ инстансов на каждое input-событие тяжела — rAF-троттлинг
-            let rangeRaf = 0;
-            const onRangeInput = () => {
-                if (rangeRaf) return;
-                rangeRaf = requestAnimationFrame(() => {
-                    rangeRaf = 0;
-                    applyRangeFromSlider();
-                });
-            };
-            rMinInput.addEventListener('input', onRangeInput);
-            rMaxInput.addEventListener('input', onRangeInput);
-            modal.querySelector('#volume-edit-range-reset').addEventListener('click', showFullRange);
-
-            showFullRange(); // стартовое состояние — виден весь диапазон
-
-            // Применить к выделенным
-            applyBtn.addEventListener('click', () => {
-                const rho = parseFloat(rhoInput.value);
-                if (!(rho > 0) || !isFinite(rho)) {
-                    alert('Введите корректное положительное сопротивление');
-                    return;
-                }
-                viewer.applyRhoToSelection(rho);
-            });
-
-            // Снять выделение
-            modal.querySelector('#volume-edit-clear').addEventListener('click', () => {
-                viewer.clearSelection();
-            });
-
-            // Сбросить все изменения
-            modal.querySelector('#volume-edit-reset').addEventListener('click', () => {
-                const n = viewer.resetAllCells();
-                if (n > 0) updateCount();
-            });
-
-            updateCount();
-        }
-
-        const totalCells = modelData.nX * modelData.nY * modelData.nZ;
-        const xExtent = modelData.xCells.reduce((a, b) => a + b, 0);
-        const yExtent = modelData.yCells.reduce((a, b) => a + b, 0);
-        const zExtent = modelData.zCells.reduce((a, b) => a + b, 0);
-        const validRho = modelData.rhoValues.filter(v => isFinite(v) && v > 0);
-        const minRho = validRho.length ? Math.min(...validRho) : NaN;
-        const maxRho = validRho.length ? Math.max(...validRho) : NaN;
-
-        statsDiv.innerHTML = `
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 0.9em;">
-                <div>
-                    <div style="color: var(--color-text-tertiary);">Размер модели</div>
-                    <div style="color: var(--color-primary); font-weight: 600;">${modelData.nX} × ${modelData.nY} × ${modelData.nZ}</div>
-                </div>
-                <div>
-                    <div style="color: var(--color-text-tertiary);">Всего ячеек</div>
-                    <div style="color: var(--color-primary); font-weight: 600;">${totalCells.toLocaleString()}</div>
-                </div>
-                <div>
-                    <div style="color: var(--color-text-tertiary);">Область (X × Y)</div>
-                    <div style="color: var(--color-primary); font-weight: 600;">${Math.round(xExtent).toLocaleString('ru-RU')} × ${Math.round(yExtent).toLocaleString('ru-RU')} м</div>
-                </div>
-                <div>
-                    <div style="color: var(--color-text-tertiary);">Глубина</div>
-                    <div style="color: var(--color-primary); font-weight: 600;">${Math.round(zExtent).toLocaleString('ru-RU')} м</div>
-                </div>
-                <div>
-                    <div style="color: var(--color-text-tertiary);">Диапазон ρ</div>
-                    <div style="color: var(--color-primary); font-weight: 600;">${isFinite(minRho) ? minRho.toFixed(1) : '—'} — ${isFinite(maxRho) ? maxRho.toFixed(1) : '—'} Ω·м</div>
-                </div>
-            </div>
-            <div style="margin-top: 12px; color: var(--color-text-tertiary); font-size: 0.85em;">
-                ${editing
-                    ? '💡 <strong>Кисть</strong>: зажмите левую кнопку и ведите по ячейкам — ρ применяется сразу. ' +
-                      '<strong>Выделение</strong>: клик по ячейке, Ctrl/Shift+клик — добавить; затем «Применить к выделенным» (пурпурный контур). ' +
-                      '<strong>Слой Z</strong>: включите «только этот слой» — остальные слои скроются, правки попадут строго в выбранный срез. ' +
-                      '<strong>Сетка</strong> — линии границ ячеек. Колесо — масштаб, правая кнопка — панорама.'
-                    : '💡 Используйте мышь для вращения, масштабирования и панорамирования модели'}
-            </div>
-        `;
-    } catch (error) {
-        console.error('Error rendering volume modal:', error);
-        statsDiv.innerHTML = `<p style="color: var(--color-danger);">Ошибка отображения: ${error.message}</p>`;
-    }
-
-    const close = () => {
-        if (_volumeViewerInstance) {
-            _volumeViewerInstance.dispose();
-            _volumeViewerInstance = null;
-        }
-        if (modal.parentNode) modal.parentNode.removeChild(modal);
-    };
-
-    modal.querySelector('.file-viewer-close').addEventListener('click', close);
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) close();
-    });
-}
