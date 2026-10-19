@@ -98,7 +98,9 @@ func main() {
 	logger.Info("Create Router")
 	router := httprouter.New()
 
-	// Middleware для установки правильных MIME типов
+	// Middleware для установки правильных MIME типов и кэширования статики.
+	// JS/CSS кешируются на 1 день с ETag (браузер проверяет свежесть при reload);
+	// HTML всегда no-cache (чтобы не смешивать старую разметку с новыми модулями).
 	setContentType := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Определяем MIME тип по расширению файла
@@ -113,12 +115,16 @@ func main() {
 			case ".html":
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			}
-			// JS/CSS/HTML всегда должны проверяться на свежесть (иначе браузер
-			// может смешать старую и новую версии модулей после деплоя).
-			// no-cache = переиспользовать только после проверки (304 дёшев).
+			// Стратегия кэширования:
+			// - HTML: no-cache (всегда проверять, чтобы не смешивать версии после деплоя)
+			// - JS/CSS: кешировать 1 день + ETag (304 при неизменном содержимом)
+			//   Это ускоряет повторные визиты и снижает нагрузку на сервер.
+			//   При деплое новые файлы получают новый ETag автоматически.
 			switch ext {
-			case ".js", ".css", ".html":
+			case ".html":
 				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			case ".js", ".css":
+				w.Header().Set("Cache-Control", "public, max-age=86400")
 			}
 			next.ServeHTTP(w, r)
 		})

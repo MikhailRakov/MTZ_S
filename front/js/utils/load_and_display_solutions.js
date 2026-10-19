@@ -1,6 +1,8 @@
 import { loadAndDisplaySolutionDetails } from "./load_and_display_solution_details.js";
 import { apiCall, apiCallWithTimeout } from './api.js';
 
+const PAGE_SIZE = 5; // Загружаем по 5 решений за раз
+
 export async function loadAndDisplaySolutions(idToken, solutionsListContainer,
     solutionsListPlaceholder, solutionDetailsContainer, solutionDetailsPlaceholder, fileUploadSection) {
     if (!solutionsListContainer || !solutionsListPlaceholder) {
@@ -10,7 +12,7 @@ export async function loadAndDisplaySolutions(idToken, solutionsListContainer,
 
     solutionsListPlaceholder.textContent = 'Загрузка решений...';
     solutionsListPlaceholder.classList.remove('hidden');
-    solutionsListContainer.innerHTML = ''; // Очищаем список
+    solutionsListContainer.innerHTML = '';
 
     try {
         console.log("[SOLUTIONS] Отправка запроса на /api/users/self/solutions");
@@ -28,94 +30,170 @@ export async function loadAndDisplaySolutions(idToken, solutionsListContainer,
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        const solutions = await response.json();
+        const allSolutions = await response.json();
+        console.log(`[SOLUTIONS] Получено ${allSolutions.length} решений`);
 
-        console.log(`[SOLUTIONS] Получено ${solutions.length} решений`);
+        solutionsListPlaceholder.classList.add('hidden');
 
-        solutionsListPlaceholder.classList.add('hidden'); // Скрываем placeholder
-        //fileUploadSection.classList.add('hidden');
-        if (solutions.length === 0) {
+        if (allSolutions.length === 0) {
             solutionsListContainer.innerHTML = '<p>У вас пока нет решений.</p>';
             solutionDetailsPlaceholder.textContent = 'Создайте первое решение!';
             solutionDetailsPlaceholder.classList.remove('hidden');
             solutionDetailsContainer.classList.add('hidden');
-
             return;
         }
 
-        // Fetch status for each solution with timeout
-        console.log("[SOLUTIONS] Fetching status for all solutions...");
+        // Пагинация: показываем первые PAGE_SIZE решений, остальные по кнопке
+        let visibleCount = Math.min(PAGE_SIZE, allSolutions.length);
+        const hasMore = allSolutions.length > PAGE_SIZE;
 
-        const fetchStatusWithTimeout = async (solution) => {
-            try {
-                console.log(`[SOLUTIONS] Fetching status for ${solution.id}...`);
-                const statusData = await apiCallWithTimeout(`/api/users/self/solutions/${solution.id}/status`, 'GET', null, {}, idToken, 5000);
-                console.log(`[SOLUTIONS] Status for ${solution.id}:`, statusData);
-                return { ...solution, status: statusData };
-            } catch (error) {
-                console.warn(`[SOLUTIONS] Failed to fetch status for ${solution.id}:`, error.message || error);
-                return { ...solution, status: { status: 'unknown', message: 'Failed to load status' } };
-            }
-        };
+        // Контейнер для списка
+        solutionsListContainer.innerHTML = `
+            <h3>Ваши решения:</h3>
+            <div class="solutions-search-wrap">
+                <input type="search" class="solutions-search-input" placeholder="🔍 Поиск по названию..." 
+                       aria-label="Поиск решений" autocomplete="off">
+            </div>
+            <div class="solutions-scroll-container">
+                <div class="solutions-list" id="solutions-list-inner"></div>
+            </div>
+            ${hasMore ? `<button type="button" class="btn btn-secondary solutions-load-more-btn" style="width:100%;margin-top:var(--spacing-sm);min-height:44px;">
+                📋 Загрузить ещё (${allSolutions.length - PAGE_SIZE} из ${allSolutions.length})
+            </button>` : ''}
+        `;
 
-        const solutionsWithStatus = await Promise.all(
-            solutions.map(fetchStatusWithTimeout)
-        );
-        console.log("[SOLUTIONS] All statuses fetched:", solutionsWithStatus);
+        const listInner = solutionsListContainer.querySelector('#solutions-list-inner');
+        const loadMoreBtn = solutionsListContainer.querySelector('.solutions-load-more-btn');
+        const searchInput = solutionsListContainer.querySelector('.solutions-search-input');
 
-        // Создаем HTML для списка решений в виде кнопок
-        let solutionsScrollContainerHTML = `
-                <h3>Ваши решения:</h3>
-                <div class="solutions-scroll-container">
-                    <div class="solutions-list">
-            `;
-        solutionsWithStatus.forEach(solution => {
-            const solutionName = solution.name; //|| `Решение (${solution.id})`;
-            const solutionID = solution.id;
-            const status = solution.status?.status || 'unknown';
-            const statusMessage = solution.status?.message || '';
-            const statusClass = getStatusClass(status);
-            const statusIcon = getStatusIcon(status);
+        // Рендер порции решений с lazy-fetch статусов
+        async function renderBatch(startIdx, count) {
+            const batch = allSolutions.slice(startIdx, startIdx + count);
 
-            solutionsScrollContainerHTML += `
-                <div class="solution-item" data-solution-id="${solutionID}">
+            // Параллельная загрузка статусов только для этой порции
+            const fetchStatusWithTimeout = async (solution) => {
+                try {
+                    const statusData = await apiCallWithTimeout(
+                        `/api/users/self/solutions/${solution.id}/status`,
+                        'GET', null, {}, idToken, 5000
+                    );
+                    return { ...solution, status: statusData };
+                } catch (error) {
+                    console.warn(`[SOLUTIONS] Failed to fetch status for ${solution.id}:`, error.message || error);
+                    return { ...solution, status: { status: 'unknown', message: 'Failed to load status' } };
+                }
+            };
+
+            const solutionsWithStatus = await Promise.all(batch.map(fetchStatusWithTimeout));
+
+            // Рендер карточек
+            for (const solution of solutionsWithStatus) {
+                const solutionName = solution.name;
+                const solutionID = solution.id;
+                const status = solution.status?.status || 'unknown';
+                const statusMessage = solution.status?.message || '';
+                const statusClass = getStatusClass(status);
+                const statusIcon = getStatusIcon(status);
+
+                const item = document.createElement('div');
+                item.className = 'solution-item';
+                item.dataset.solutionId = solutionID;
+                item.innerHTML = `
                     <button class="solution-btn ${statusClass}" data-solution-id="${solutionID}">
                         <span class="solution-name">${solutionName}</span>
                         <span class="solution-status ${statusClass}" title="${statusMessage}">
                             ${statusIcon} ${formatStatus(status)}
                         </span>
                     </button>
-                </div>
-            `;
-        });
-        solutionsScrollContainerHTML += `
-                    </div>
-                </div>
-            `;
+                `;
+                listInner.appendChild(item);
+            }
 
-        solutionsListContainer.innerHTML = solutionsScrollContainerHTML;
+            // Привязка кликов к новым кнопкам
+            listInner.querySelectorAll('.solution-btn:not([data-bound])').forEach(button => {
+                button.dataset.bound = '1';
+                button.addEventListener('click', (e) => {
+                    listInner.querySelectorAll('.solution-btn').forEach(b => {
+                        b.classList.remove('selected');
+                        b.removeAttribute("style");
+                    });
+                    button.classList.add('selected');
 
-        solutionsListContainer.querySelectorAll('.solution-btn').forEach(button => {
-            button.addEventListener('click', (e) => {
-                solutionsListContainer.querySelectorAll('.solution-btn').forEach(buttons => {
-                    buttons.classList.remove('selected');
-                    buttons.removeAttribute("style");
-                })
-                button.classList.add('selected');
-
-                let solutionID = e.target.closest('.solution-btn').getAttribute('data-solution-id');
-                console.log(`[SOLUTIONS] Выбрано решение с ID: ${solutionID}`);
-                loadAndDisplaySolutionDetails(solutionID, idToken, solutionDetailsPlaceholder, solutionDetailsContainer, fileUploadSection);
+                    const solutionID = e.target.closest('.solution-btn').getAttribute('data-solution-id');
+                    console.log(`[SOLUTIONS] Выбрано решение с ID: ${solutionID}`);
+                    loadAndDisplaySolutionDetails(solutionID, idToken, solutionDetailsPlaceholder, solutionDetailsContainer, fileUploadSection);
+                });
             });
-        });
+        }
+
+        // Первая порция
+        await renderBatch(0, visibleCount);
+
+        // Debounce-поиск по названию решений (300ms)
+        let searchTimer = null;
+        if (searchInput) {
+            searchInput.addEventListener('input', () => {
+                if (searchTimer) clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => {
+                    const query = searchInput.value.trim().toLowerCase();
+                    const items = listInner.querySelectorAll('.solution-item');
+                    let visibleItems = 0;
+                    items.forEach(item => {
+                        const name = item.querySelector('.solution-name')?.textContent?.toLowerCase() || '';
+                        const matches = !query || name.includes(query);
+                        item.style.display = matches ? '' : 'none';
+                        if (matches) visibleItems++;
+                    });
+                    // Скрываем кнопку «Загрузить ещё» при активном поиске
+                    if (loadMoreBtn) {
+                        loadMoreBtn.style.display = query ? 'none' : '';
+                    }
+                    // Показываем сообщение если ничего не найдено
+                    let noResults = listInner.querySelector('.solutions-no-results');
+                    if (visibleItems === 0 && query) {
+                        if (!noResults) {
+                            noResults = document.createElement('p');
+                            noResults.className = 'solutions-no-results';
+                            noResults.style.cssText = 'padding:var(--spacing-md);color:var(--color-text-tertiary);text-align:center;';
+                            listInner.appendChild(noResults);
+                        }
+                        noResults.textContent = `Ничего не найдено по запросу «${searchInput.value.trim()}»`;
+                        noResults.style.display = '';
+                    } else if (noResults) {
+                        noResults.style.display = 'none';
+                    }
+                }, 300);
+            });
+        }
+
+        // Кнопка «Загрузить ещё»
+        if (loadMoreBtn) {
+            loadMoreBtn.addEventListener('click', async () => {
+                const prevCount = visibleCount;
+                visibleCount = Math.min(visibleCount + PAGE_SIZE, allSolutions.length);
+                const remaining = allSolutions.length - visibleCount;
+
+                loadMoreBtn.disabled = true;
+                loadMoreBtn.textContent = '⏳ Загрузка...';
+
+                await renderBatch(prevCount, visibleCount - prevCount);
+
+                if (remaining > 0) {
+                    loadMoreBtn.disabled = false;
+                    loadMoreBtn.textContent = `📋 Загрузить ещё (${remaining} из ${allSolutions.length})`;
+                } else {
+                    loadMoreBtn.remove();
+                }
+            });
+        }
+
         const newCreateBtn = solutionsListContainer.querySelector('#create-solution-btn');
         if (newCreateBtn) {
             newCreateBtn.addEventListener('click', openCreateSolutionModal);
         }
 
-
         // Если детали еще не отображены, показываем placeholder
-        if (solutionDetailsContainer.classList.contains('hidden') && solutionsListContainer.innerHTML !== '<p>У вас пока нет решений.</p>') {
+        if (solutionDetailsContainer.classList.contains('hidden')) {
             solutionDetailsPlaceholder.textContent = 'Выберите решение из списка слева.';
             solutionDetailsPlaceholder.classList.remove('hidden');
         }

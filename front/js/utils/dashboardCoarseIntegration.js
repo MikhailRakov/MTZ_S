@@ -2,6 +2,7 @@
 import { CoarseGenerator } from './coarseGenerator.js';
 import { convertSimpegToProfiles, buildSimpegModelData, buildCoarseFromSimpeg } from './simpegProfilesConverter.js';
 import { showVolumeModal } from './resultViewer.js';
+import { showHint } from './onboardingHints.js';
 
 let generatorInstance = null;
 
@@ -242,10 +243,10 @@ export function initCoarseGenerator() {
             // Show visualization
             gridVisualization.classList.remove('hidden');
 
-            // Initialize 3D visualization
-            setTimeout(() => {
+            // Initialize 3D visualization (async: lazy-loads Three.js)
+            setTimeout(async () => {
                 try {
-                    generator.init3DVisualization(gridCanvasContainer, coarseData, profilesStats);
+                    await generator.init3DVisualization(gridCanvasContainer, coarseData, profilesStats);
 
                     // Update stats
                     const totalCells = config.nX * config.nY * config.nZ;
@@ -423,6 +424,18 @@ export function initCoarseGenerator() {
             // Весь разобранный .npz — чтобы Coarse.dat строился ИЗ СЕТКИ модели
             simpegNpz = npz;
 
+            // Onboarding-подсказка: показать пользователю следующий шаг
+            if (useConvertedProfilesBtn) {
+                setTimeout(() => {
+                    showHint(
+                        'use-converted-profiles',
+                        useConvertedProfilesBtn,
+                        '👆 Нажмите сюда, чтобы использовать сконвертированные данные для расчёта',
+                        { position: 'top', autoHideMs: 8000 }
+                    );
+                }, 500);
+            }
+
             const rhoVals = qc.map(q => q.rho).filter(v => isFinite(v) && v > 0);
             const rhoMin = rhoVals.length ? Math.min(...rhoVals) : NaN;
             const rhoMax = rhoVals.length ? Math.max(...rhoVals) : NaN;
@@ -507,19 +520,19 @@ export function initCoarseGenerator() {
     });
 
     // Объёмная модель SimPEG (.npz) — тот же стиль, что у готовых решений
-    simpegVolumeBtn?.addEventListener('click', () => {
+    simpegVolumeBtn?.addEventListener('click', async () => {
         if (!simpegModelData) {
             alert('В загруженном .npz нет данных модели (sigma_model / mesh_*). Объёмный просмотр недоступен.');
             return;
         }
-        showVolumeModal(simpegModelData, 'Модель проводимости SimPEG (объём)');
+        await showVolumeModal(simpegModelData, 'Модель проводимости SimPEG (объём)');
     });
 
     // Объёмный просмотр сгенерированной Coarse-сетки С РЕДАКТИРОВАНИЕМ:
     // пользователь может менять сопротивление отдельных ячеек (априорная информация).
     // Правки пишутся в общий массив coarse.rhoValues, а Coarse.dat пересобирается
     // лениво — при скачивании или «Использовать эту сетку».
-    volumeCoarseBtn?.addEventListener('click', () => {
+    volumeCoarseBtn?.addEventListener('click', async () => {
         const coarse = generator.generatedCoarse;
         if (!coarse) {
             alert('Сначала сгенерируйте сетку');
@@ -533,7 +546,7 @@ export function initCoarseGenerator() {
             coarse.rhoValues = new Array(config.nX * config.nY * config.nZ).fill(config.defaultRho || 100);
         }
         const rhoValues = coarse.rhoValues;
-        showVolumeModal(
+        await showVolumeModal(
             { nX: config.nX, nY: config.nY, nZ: config.nZ, xCells, yCells, zCells, rhoValues },
             `Coarse-сетка ${config.nX}×${config.nY}×${config.nZ} (фон ρ = ${config.defaultRho} Ω·м)`,
             {

@@ -1,6 +1,10 @@
 // Coarse Grid Generator with 3D Visualization
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+// Three.js загружается лениво (dynamic import) — только при первом вызове
+// init3DVisualization(). Это экономит ~600 KB в начальной загрузке страницы.
+
+import { loadThree } from './threeLoader.js';
+import { createCoordinateAxes } from './coordinateAxes.js';
+import { calculatePositions as sharedCalculatePositions } from './gridUtils.js';
 
 // Defaults for the automatic grid size suggestion.
 // Horizontal cell size is derived from the station spacing, the model boundary
@@ -32,6 +36,17 @@ export class CoarseGenerator {
         this.renderer = null;
         this.controls = null;
         this.gridMesh = null;
+        this._THREE = null;
+        this._OrbitControls = null;
+    }
+
+    /** Ленивая загрузка Three.js (общий загрузчик ./threeLoader.js). */
+    async _ensureThree() {
+        if (this._THREE) return { THREE: this._THREE, OrbitControls: this._OrbitControls };
+        const { THREE, OrbitControls } = await loadThree();
+        this._THREE = THREE;
+        this._OrbitControls = OrbitControls;
+        return { THREE: this._THREE, OrbitControls: this._OrbitControls };
     }
 
     // Parse Profiles.dat file
@@ -570,14 +585,16 @@ export class CoarseGenerator {
         return g.content;
     }
 
-    // Initialize 3D visualization
-    init3DVisualization(containerElement, gridData, profilesStats = null) {
+    // Initialize 3D visualization (async: lazy-loads Three.js)
+    async init3DVisualization(containerElement, gridData, profilesStats = null) {
+        const { THREE, OrbitControls } = await this._ensureThree();
+
         const width = containerElement.clientWidth;
         const height = containerElement.clientHeight;
 
         // Scene
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x0a0a0f);
+        this.scene = new this._THREE.Scene();
+        this.scene.background = new this._THREE.Color(0x0a0a0f);
 
         // Camera - adjusted for better view
         const { xCells, yCells, zCells } = gridData;
@@ -586,7 +603,7 @@ export class CoarseGenerator {
         const zExtent = zCells.reduce((a, b) => a + b, 0);
         const maxExtent = Math.max(xExtent, yExtent, zExtent);
 
-        this.camera = new THREE.PerspectiveCamera(50, width / height, maxExtent * 0.01, maxExtent * 10);
+        this.camera = new this._THREE.PerspectiveCamera(50, width / height, maxExtent * 0.01, maxExtent * 10);
 
         // IMPORTANT: Set camera up vector to make Z axis point up (Cartesian coordinates)
         // before lookAt(), so the initial orientation is already computed with Z up
@@ -598,7 +615,7 @@ export class CoarseGenerator {
         this.camera.lookAt(0, 0, -zExtent * 0.3);
 
         // Renderer with better settings
-        this.renderer = new THREE.WebGLRenderer({
+        this.renderer = new this._THREE.WebGLRenderer({
             antialias: true,
             alpha: true
         });
@@ -608,7 +625,7 @@ export class CoarseGenerator {
         containerElement.appendChild(this.renderer.domElement);
 
         // Controls
-        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls = new this._OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.08;
         this.controls.maxDistance = maxExtent * 5;
@@ -616,18 +633,18 @@ export class CoarseGenerator {
         this.controls.target.set(0, 0, -zExtent * 0.3);
 
         // Lights - improved for better visibility
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        const ambientLight = new this._THREE.AmbientLight(0xffffff, 0.6);
         this.scene.add(ambientLight);
 
-        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+        const directionalLight1 = new this._THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight1.position.set(1, 1, 0.5);
         this.scene.add(directionalLight1);
 
-        const directionalLight2 = new THREE.DirectionalLight(0x4a90e2, 0.5);
+        const directionalLight2 = new this._THREE.DirectionalLight(0x4a90e2, 0.5);
         directionalLight2.position.set(-1, -0.5, -0.5);
         this.scene.add(directionalLight2);
 
-        const directionalLight3 = new THREE.DirectionalLight(0xff6b6b, 0.3);
+        const directionalLight3 = new this._THREE.DirectionalLight(0xff6b6b, 0.3);
         directionalLight3.position.set(0, -1, 0.5);
         this.scene.add(directionalLight3);
 
@@ -697,7 +714,7 @@ export class CoarseGenerator {
         }
 
         // Group for all stations
-        const stationsGroup = new THREE.Group();
+        const stationsGroup = new this._THREE.Group();
 
         // The grid is drawn centred on the station area (see addGridToScene), so the
         // stations are drawn relative to that same centre, using the same axis mapping:
@@ -711,10 +728,10 @@ export class CoarseGenerator {
         // Use a fraction of the max extent so cones are visible at any scale
         const coneHeight = Math.max(500, maxExtent * 0.015);   // At least 500m, or 1.5% of grid extent
         const coneRadius = Math.max(250, maxExtent * 0.0075);  // At least 250m, or 0.75% of grid extent
-        const coneGeometry = new THREE.ConeGeometry(coneRadius, coneHeight, 8);
+        const coneGeometry = new this._THREE.ConeGeometry(coneRadius, coneHeight, 8);
 
         // Material for station cones - bright orange/yellow with glow effect
-        const coneMaterial = new THREE.MeshPhongMaterial({
+        const coneMaterial = new this._THREE.MeshPhongMaterial({
             color: 0xFFAA00,
             emissive: 0xFF6600,
             emissiveIntensity: 0.5,
@@ -732,7 +749,7 @@ export class CoarseGenerator {
             console.log(`[COARSE GENERATOR] Station ${code}: X(N)=${x.toFixed(2)}, Y(E)=${y.toFixed(2)}, Z=${z.toFixed(2)} -> Scene: X=${sceneX.toFixed(2)}, Y=${sceneY.toFixed(2)}`);
 
             // Create cone for this station
-            const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+            const cone = new this._THREE.Mesh(coneGeometry, coneMaterial);
 
             // Position cone at station location on the surface (Z = 0)
             // Cone base sits on the surface (Z=0), tip points UP (+Z direction) for visibility
@@ -753,8 +770,8 @@ export class CoarseGenerator {
             labelContext.textBaseline = 'middle';
             labelContext.fillText(code, 128, 32);
 
-            const labelTexture = new THREE.CanvasTexture(labelCanvas);
-            const labelMaterial = new THREE.SpriteMaterial({
+            const labelTexture = new this._THREE.CanvasTexture(labelCanvas);
+            const labelMaterial = new this._THREE.SpriteMaterial({
                 map: labelTexture,
                 transparent: true,
                 depthTest: false,
@@ -762,7 +779,7 @@ export class CoarseGenerator {
             });
             // Render labels on top
             labelMaterial.renderOrder = 2;
-            const labelSprite = new THREE.Sprite(labelMaterial);
+            const labelSprite = new this._THREE.Sprite(labelMaterial);
             labelSprite.position.set(sceneX, sceneY, coneHeight + 100);
             labelSprite.scale.set(coneRadius * 4, coneRadius, 1);
 
@@ -777,112 +794,16 @@ export class CoarseGenerator {
     }
 
     // Add coordinate axes with labels
-    // Scene X = model Y (East, green), scene Y = model X (North, red), scene -Z = depth
+    // Scene X = model Y (East, green), scene Y = model X (North, red), scene -Z = depth.
+    // Реализация вынесена в ./coordinateAxes.js (общая с ResultViewer).
     addCoordinateAxes(maxExtent, xExtent, yExtent, zExtent) {
-        // Axes parameters - increased length for better visibility
-        const axisLength = maxExtent * 0.7;
-        const arrowSize = axisLength * 0.04;
-        const labelDistance = axisLength * 1.12;
-
-        // Create axes geometry
-        const axesGroup = new THREE.Group();
-        // Render axes after grid but before cones/labels
-        axesGroup.renderOrder = 1;
-
-        // Scene X axis = model Y / East (Green)
-        const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(axisLength, 0, 0)
-        ]);
-        const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 3 });
-        const xAxis = new THREE.Line(xAxisGeometry, xAxisMaterial);
-        axesGroup.add(xAxis);
-
-        // East arrow
-        const xArrowGeometry = new THREE.ConeGeometry(arrowSize * 0.5, arrowSize * 2, 8);
-        const xArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-        const xArrow = new THREE.Mesh(xArrowGeometry, xArrowMaterial);
-        xArrow.position.set(axisLength, 0, 0);
-        xArrow.rotation.z = -Math.PI / 2;
-        axesGroup.add(xArrow);
-
-        // Scene Y axis = model X / North (Red)
-        const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(0, axisLength, 0)
-        ]);
-        const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 3 });
-        const yAxis = new THREE.Line(yAxisGeometry, yAxisMaterial);
-        axesGroup.add(yAxis);
-
-        // North arrow
-        const yArrowGeometry = new THREE.ConeGeometry(arrowSize * 0.5, arrowSize * 2, 8);
-        const yArrowMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-        const yArrow = new THREE.Mesh(yArrowGeometry, yArrowMaterial);
-        yArrow.position.set(0, axisLength, 0);
-        axesGroup.add(yArrow);
-
-        // Z axis (Blue) - pointing DOWN (negative Z is depth)
-        const zAxisGeometry = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(0, 0, -axisLength)
-        ]);
-        const zAxisMaterial = new THREE.LineBasicMaterial({ color: 0x0088ff, linewidth: 3 });
-        const zAxis = new THREE.Line(zAxisGeometry, zAxisMaterial);
-        axesGroup.add(zAxis);
-
-        // Z arrow
-        const zArrowGeometry = new THREE.ConeGeometry(arrowSize * 0.5, arrowSize * 2, 8);
-        const zArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x0088ff });
-        const zArrow = new THREE.Mesh(zArrowGeometry, zArrowMaterial);
-        zArrow.position.set(0, 0, -axisLength);
-        zArrow.rotation.x = Math.PI / 2;
-        axesGroup.add(zArrow);
-
-        // Add text labels using sprites
-        this.addAxisLabel('Y (East)', labelDistance, 0, 0, 0x00ff00, axesGroup);
-        this.addAxisLabel('X (North)', 0, labelDistance, 0, 0xff0000, axesGroup);
-        this.addAxisLabel('Z (Depth)', 0, 0, -labelDistance, 0x0088ff, axesGroup);
-
-        // Add distance labels - scene X carries the model Y extent and vice versa
-        const eastLabel = `${(yExtent / 1000).toFixed(1)} km`;
-        const northLabel = `${(xExtent / 1000).toFixed(1)} km`;
-        const zLabel = `${(zExtent / 1000).toFixed(1)} km`;
-
-        this.addAxisLabel(eastLabel, axisLength * 0.5, -arrowSize * 3, 0, 0x66ff66, axesGroup, 0.7);
-        this.addAxisLabel(northLabel, -arrowSize * 3, axisLength * 0.5, 0, 0xff6666, axesGroup, 0.7);
-        this.addAxisLabel(zLabel, -arrowSize * 3, 0, -axisLength * 0.5, 0x6666ff, axesGroup, 0.7);
-
-        this.scene.add(axesGroup);
-    }
-
-    // Helper to create text labels as sprites
-    addAxisLabel(text, x, y, z, color, parent, scale = 1.0) {
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = 256;
-        canvas.height = 128;
-
-        // Draw text
-        context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
-        context.font = 'bold 48px Arial';
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        context.fillText(text, 128, 64);
-
-        // Create sprite
-        const texture = new THREE.CanvasTexture(canvas);
-        const spriteMaterial = new THREE.SpriteMaterial({
-            map: texture,
-            transparent: true,
-            depthTest: false,
-            depthWrite: false
+        const axesGroup = createCoordinateAxes(this._THREE, {
+            xExtent: yExtent,   // scene X = East = model Y extent
+            yExtent: xExtent,   // scene Y = North = model X extent
+            zExtent,
+            axisLength: maxExtent * 0.7,
         });
-        const sprite = new THREE.Sprite(spriteMaterial);
-        sprite.position.set(x, y, z);
-        sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
-
-        parent.add(sprite);
+        this.scene.add(axesGroup);
     }
 
     // Add grid mesh to scene
@@ -903,7 +824,7 @@ export class CoarseGenerator {
         const yOffset = -(yPositions[yPositions.length - 1] / 2);
 
         // Create wireframe geometry
-        const geometry = new THREE.BufferGeometry();
+        const geometry = new this._THREE.BufferGeometry();
         const vertices = [];
         const colors = [];
 
@@ -914,11 +835,11 @@ export class CoarseGenerator {
         };
 
         // Color palette - brighter colors for better visibility
-        const colorSurface = new THREE.Color(0x00ff88);      // Bright green for surface
-        const colorPrimary = new THREE.Color(0x1A9FFF);      // Bright blue
-        const colorSecondary = new THREE.Color(0x667eea);    // Medium blue
-        const colorTertiary = new THREE.Color(0x444466);     // Dim blue
-        const colorDepth = new THREE.Color(0xff4444);        // Red for deep layers
+        const colorSurface = new this._THREE.Color(0x00ff88);      // Bright green for surface
+        const colorPrimary = new this._THREE.Color(0x1A9FFF);      // Bright blue
+        const colorSecondary = new this._THREE.Color(0x667eea);    // Medium blue
+        const colorTertiary = new this._THREE.Color(0x444466);     // Dim blue
+        const colorDepth = new this._THREE.Color(0xff4444);        // Red for deep layers
 
         // Calculate center region (where stations are) - indices follow the scene axes
         const centerXStart = Math.floor(yCells.length * 0.3);
@@ -943,7 +864,7 @@ export class CoarseGenerator {
             for (let j = 0; j < yPositions.length; j++) {
                 const y = yPositions[j] + yOffset;
                 const lineColor = (j >= centerYStart && j <= centerYEnd) ? color :
-                                 new THREE.Color(color.r * 0.4, color.g * 0.4, color.b * 0.4);
+                                 new this._THREE.Color(color.r * 0.4, color.g * 0.4, color.b * 0.4);
 
                 addLine(
                     [xPositions[0] + xOffset, y, z],
@@ -956,7 +877,7 @@ export class CoarseGenerator {
             for (let i = 0; i < xPositions.length; i++) {
                 const x = xPositions[i] + xOffset;
                 const lineColor = (i >= centerXStart && i <= centerXEnd) ? color :
-                                 new THREE.Color(color.r * 0.4, color.g * 0.4, color.b * 0.4);
+                                 new this._THREE.Color(color.r * 0.4, color.g * 0.4, color.b * 0.4);
 
                 addLine(
                     [x, yPositions[0] + yOffset, z],
@@ -1084,34 +1005,34 @@ export class CoarseGenerator {
             addLine(p1, p2, [boxColor.r, boxColor.g, boxColor.b]);
         });
 
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setAttribute('position', new this._THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setAttribute('color', new this._THREE.Float32BufferAttribute(colors, 3));
 
-        const material = new THREE.LineBasicMaterial({
+        const material = new this._THREE.LineBasicMaterial({
             vertexColors: true,
             linewidth: 2,
             transparent: true,
             opacity: 0.6  // Make lines more transparent (0.0 = fully transparent, 1.0 = opaque)
         });
 
-        this.gridMesh = new THREE.LineSegments(geometry, material);
+        this.gridMesh = new this._THREE.LineSegments(geometry, material);
         // Render grid before cones and labels
         this.gridMesh.renderOrder = 0;
         this.scene.add(this.gridMesh);
 
         // Add semi-transparent surface plane at Z=0 (Cartesian coords)
-        const planeGeometry = new THREE.PlaneGeometry(
+        const planeGeometry = new this._THREE.PlaneGeometry(
             xPositions[xPositions.length - 1],
             yPositions[yPositions.length - 1]
         );
-        const planeMaterial = new THREE.MeshPhongMaterial({
+        const planeMaterial = new this._THREE.MeshPhongMaterial({
             color: 0x1a3a4a,
             transparent: true,
             opacity: 0.15,
-            side: THREE.DoubleSide,
+            side: this._THREE.DoubleSide,
             shininess: 30
         });
-        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        const plane = new this._THREE.Mesh(planeGeometry, planeMaterial);
         // No rotation needed - plane is already in XY plane with camera.up = (0,0,1)
         plane.position.z = 0;
         // Render plane first (behind other objects)
@@ -1119,15 +1040,9 @@ export class CoarseGenerator {
         this.scene.add(plane);
     }
 
-    // Calculate cumulative positions
+    // Calculate cumulative positions (реализация в ./gridUtils.js)
     calculatePositions(cells) {
-        const positions = [0];
-        let cumulative = 0;
-        for (const cell of cells) {
-            cumulative += cell;
-            positions.push(cumulative);
-        }
-        return positions;
+        return sharedCalculatePositions(cells);
     }
 
     // Download generated file

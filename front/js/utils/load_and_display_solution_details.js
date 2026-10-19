@@ -11,14 +11,18 @@ let resultViewerInstance = null;
 let detailsContainerEl = null;
 // Таймер опроса статуса во время выполнения расчёта
 let statusPollTimer = null;
+let _pollBackoffMs = 10000; // start at 10s, grow to 60s when status unchanged
+let _lastPollStatus = null;
 
 const IN_PROGRESS_STATUSES = ['running', 'queued', 'pending', 'processing', 'in_progress', 'waiting'];
 
 function stopStatusPolling() {
     if (statusPollTimer) {
-        clearInterval(statusPollTimer);
+        clearTimeout(statusPollTimer);
         statusPollTimer = null;
     }
+    _pollBackoffMs = 10000;
+    _lastPollStatus = null;
 }
 
 // Обновляет бейдж статуса и состояние кнопки перезапуска без полной
@@ -42,25 +46,43 @@ function updateStatusBadge(statusData) {
     }
 }
 
-// Периодический опрос статуса: обновляет бейдж, а по завершении расчёта
-// подтягивает свежие файлы и историю версий результатов
+// Периодический опрос статуса с exponential backoff: 10s → 20s → 40s → 60s max.
+// Если статус изменился — сбрасываем backoff на 10s. По завершении расчёта
+// подтягивает свежие файлы и историю версий результатов.
 function startStatusPolling(solutionId, idToken) {
     stopStatusPolling();
-    statusPollTimer = setInterval(async () => {
+
+    const poll = async () => {
         try {
             const data = await apiCallWithTimeout(`/api/users/self/solutions/${solutionId}/status`, 'GET', null, {}, idToken, 5000);
             updateStatusBadge(data);
             const st = (data && data.status) || 'unknown';
+
             if (st === 'completed' || st === 'success' || st === 'finished') {
                 stopStatusPolling();
                 await loadSolutionFiles(solutionId, idToken);
+                return;
             } else if (st === 'failed' || st === 'error' || st === 'cancelled' || st === 'canceled') {
                 stopStatusPolling();
+                return;
+            }
+
+            // Backoff: если статус не изменился — увеличиваем интервал
+            if (st === _lastPollStatus) {
+                _pollBackoffMs = Math.min(_pollBackoffMs * 2, 60000);
+            } else {
+                _pollBackoffMs = 10000;
+                _lastPollStatus = st;
             }
         } catch (err) {
             console.warn('[SOLUTION DETAILS] Опрос статуса не удался:', err);
+            // При ошибке тоже backoff, но не более 30s
+            _pollBackoffMs = Math.min(_pollBackoffMs * 1.5, 30000);
         }
-    }, 10000);
+        statusPollTimer = setTimeout(poll, _pollBackoffMs);
+    };
+
+    statusPollTimer = setTimeout(poll, _pollBackoffMs);
 }
 
 // Кнопка «Перезапустить расчёт»: повторно отправляет исходные данные решения
@@ -230,7 +252,7 @@ async function viewFile(solutionId, fileKey, fileName, idToken) {
     if (isResultFile(fileName)) {
       // Open 3D result viewer for inversion results
       const text = await blob.text();
-      show3DResultViewer(text, fileName);
+      await show3DResultViewer(text, fileName);
     } else if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) {
       // Open image in modal
       showImageModal(url, fileName);
@@ -335,7 +357,7 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function show3DResultViewer(fileContent, fileName) {
+async function show3DResultViewer(fileContent, fileName) {
   const modal = document.createElement('div');
   modal.className = 'file-viewer-modal result-viewer-modal-large';
   modal.innerHTML = `
@@ -412,8 +434,8 @@ function show3DResultViewer(fileContent, fileName) {
       </div>
     `;
 
-    // Initialize 3D visualization
-    resultViewerInstance.init3DVisualization(container, modelData);
+    // Initialize 3D visualization (async: lazy-loads Three.js)
+    await resultViewerInstance.init3DVisualization(container, modelData);
 
   } catch (error) {
     console.error('Error parsing result file:', error);
