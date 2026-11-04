@@ -169,6 +169,7 @@ func main() {
 	// брокере и восстанавливает связь при первом же обращении (виджет
 	// очереди и публикация задач больше не умирают навсегда после обрыва).
 	rabbitMgr := rabbitmq.NewManager(os.Getenv("RABBITMQ_URL"), "calculation_tasks", logger)
+	rabbitMgr.AddQueue(rabbitmq.QueuePhoenixConversion)
 	if _, err := rabbitMgr.Channel(); err != nil {
 		logger.Errorf("RabbitMQ is not available at startup: %v — will reconnect on demand", err)
 	}

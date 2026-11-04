@@ -487,7 +487,13 @@ export async function loadAndDisplaySolutionDetails(solutionID, idToken, solutio
         console.error("[SOLUTION DETAILS] Элементы .block-right не найдены в DOM.");
         return;
     }
-    
+
+    // fileUploadSection может быть null при первом вызове (DOM ещё не готов) —
+    // подхватываем из DOM напрямую, чтобы не зависеть от порядка инициализации
+    if (!fileUploadSection) {
+        fileUploadSection = document.getElementById('file-upload-section');
+    }
+
     elements.uploadMessage.classList.add('hidden');
 
     solutionDetailsPlaceholder.textContent = 'Загрузка информации о решении...';
@@ -655,7 +661,7 @@ function getStatusIcon(status) {
         case 'completed':
         case 'success':
         case 'finished':
-            return '✅';
+            return '';
         case 'running':
         case 'processing':
         case 'in_progress':
@@ -671,7 +677,7 @@ function getStatusIcon(status) {
         case 'canceled':
             return '🚫';
         default:
-            return '❓';
+            return '';
     }
 }
 

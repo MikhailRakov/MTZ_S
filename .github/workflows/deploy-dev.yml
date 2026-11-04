@@ -86,6 +86,6 @@ jobs:
             --restart unless-stopped \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-          echo "✅ DEV деплой завершён!"
+          echo " DEV деплой завершён!"
           echo "🔗 Dev server running on port 8081"
           docker ps | grep mtz-server-dev

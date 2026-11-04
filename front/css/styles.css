@@ -1435,6 +1435,14 @@ textarea:focus {
     margin-bottom: var(--spacing-lg);
 }
 
+.phoenix-import-section {
+    background-color: var(--color-bg-tertiary);
+    border: 2px solid var(--color-warning);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
 .simpeg-upload-area {
     border: 3px dashed var(--color-primary);
     border-radius: var(--radius-md);

@@ -35,7 +35,7 @@
             <!-- Статистика очереди: активные серверы расчёта + задачи в очереди.
                  Опрос /api/system/stats каждые 10 с — см. initQueueStatsWidget в main.js -->
             <div id="queue-stats-widget" class="queue-stats-widget" title="Статистика очереди расчётов">
-                <span class="queue-stats-icon">🖥️</span>
+                <span class="queue-stats-icon"></span>
                 <div class="queue-stats-info">
                     <span class="queue-stats-label">Серверы расчёта</span>
                     <span id="queue-stats-consumers" class="queue-stats-value">—</span>
@@ -90,8 +90,9 @@
 
                 <!-- Import Type Tabs -->
                 <div class="import-tabs">
-                    <button class="import-tab active" data-tab="profiles">📁 Profiles.dat</button>
-                    <button class="import-tab" data-tab="simpeg">🔬 SimPEG (.npz)</button>
+                    <button class="import-tab active" data-tab="profiles"> Profiles.dat</button>
+                    <button class="import-tab" data-tab="simpeg"> SimPEG (.npz)</button>
+                    <button class="import-tab" data-tab="phoenix"> Phoenix (raw)</button>
                 </div>
 
                 <!-- Profiles.dat Import Tab Content -->
@@ -105,7 +106,7 @@
 
                     <div id="generator-content" class="generator-content">
                         <div class="generator-upload-area" id="profiles-upload-area">
-                            <div style="font-size: 3em; margin-bottom: 10px;">📁</div>
+                            <div style="font-size: 3em; margin-bottom: 10px;"></div>
                             <p><strong>Загрузите Profiles.dat</strong></p>
                             <p style="font-size: 0.9em; color: var(--color-text-tertiary); margin-top: 8px;">
                                 Для автоматической генерации coarse сетки
@@ -205,7 +206,7 @@
                 <div id="tab-simpeg" class="import-tab-content">
                     <div class="simpeg-import-section">
                         <div class="generator-header">
-                            <h4 style="color: var(--color-primary); margin: 0;">🔬 Импорт SimPEG (.npz)</h4>
+                            <h4 style="color: var(--color-primary); margin: 0;"> Импорт SimPEG (.npz)</h4>
                         </div>
                         <p style="color: var(--color-text-secondary); margin: 16px 0;">
                             Загрузите файл результатов SimPEG (<code>mtz_simpeg_results.npz</code>). 
@@ -229,7 +230,7 @@
 
                         <div id="simpeg-result" class="grid-visualization hidden">
                             <div class="viz-header">
-                                <h4 style="margin: 0; color: var(--color-primary);">✅ Конвертация завершена</h4>
+                                <h4 style="margin: 0; color: var(--color-primary);"> Конвертация завершена</h4>
                                 <div class="viz-controls">
                                     <button type="button" id="simpeg-volume-btn" class="btn btn-sm">📊 Объёмная модель (volume)</button>
                                     <button type="button" id="download-profiles-btn" class="btn btn-success btn-sm">💾 Скачать Profiles.dat</button>
@@ -237,6 +238,74 @@
                                 </div>
                             </div>
                             <div id="simpeg-stats" class="grid-stats"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phoenix Raw Data Import Tab Content -->
+                <div id="tab-phoenix" class="import-tab-content">
+                    <div class="phoenix-import-section">
+                        <div class="generator-header">
+                            <h4 style="color: var(--color-primary); margin: 0;"> Импорт сырых данных Phoenix</h4>
+                        </div>
+                        <p style="color: var(--color-text-secondary); margin: 16px 0;">
+                            Загрузите zip-архив с файлами записи станции Phoenix (TBL + Cal + опционально .bin).
+                            Браузерный конвертер извлечёт метаданные станции и калибровки, затем архив будет отправлен на серверную обработку (TS → компоненты импеданса → инверсия).
+                        </p>
+
+                        <div class="generator-upload-area" id="phoenix-upload-area">
+                            <div style="font-size: 3em; margin-bottom: 10px;">📦</div>
+                            <p><strong>Загрузите .zip архив</strong></p>
+                            <p style="font-size: 0.9em; color: var(--color-text-tertiary); margin-top: 8px;">
+                                Должен содержать хотя бы один <code>.TBL</code> и папку <code>Cal/</code> с калибровками
+                            </p>
+                            <input type="file" id="phoenix-file-input" accept=".zip" style="display: none;">
+                        </div>
+
+                        <div id="phoenix-preview" class="hidden" style="margin-top: 20px;">
+                            <div class="viz-header">
+                                <h4 style="margin: 0; color: var(--color-primary);">📋 Предпросмотр метаданных</h4>
+                                <div class="viz-controls">
+                                    <button type="button" id="phoenix-reset-btn" class="btn btn-secondary btn-sm">↺ Сбросить</button>
+                                </div>
+                            </div>
+                            <div id="phoenix-station-info" class="profiles-info" style="margin-top: 12px;"></div>
+                            <div id="phoenix-cal-curves" style="margin-top: 16px;">
+                                <h5 style="margin: 0 0 8px 0; color: var(--color-text-secondary);">Калибровочные кривые катушек</h5>
+                                <canvas id="phoenix-cal-canvas" width="600" height="260" style="width: 100%; max-width: 600px; background: var(--color-bg-tertiary); border-radius: var(--radius-md);"></canvas>
+                                <div id="phoenix-cal-legend" style="font-size: var(--text-xs); color: var(--color-text-tertiary); margin-top: 6px;"></div>
+                            </div>
+                            <div style="margin-top: 16px; padding: 12px; background: var(--color-info-light); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--color-info);">
+                                💡 Проверьте координаты и ориентацию датчиков выше. При необходимости отредактируйте поля перед отправкой — исправленные значения будут переданы вместе с архивом.
+                            </div>
+                            <div class="controls-grid" style="margin-top: 16px;">
+                                <div class="control-group">
+                                    <label>Широта (°N)</label>
+                                    <input type="number" id="phoenix-lat" step="0.0001">
+                                </div>
+                                <div class="control-group">
+                                    <label>Долгота (°E)</label>
+                                    <input type="number" id="phoenix-lon" step="0.0001">
+                                </div>
+                                <div class="control-group">
+                                    <label>Высота (м)</label>
+                                    <input type="number" id="phoenix-elev" step="1">
+                                </div>
+                                <div class="control-group">
+                                    <label>Магнитное склонение (°)</label>
+                                    <input type="number" id="phoenix-decl" step="0.1">
+                                </div>
+                            </div>
+                            <button type="button" id="phoenix-submit-btn" class="btn btn-success" style="width: 100%; margin-top: 16px;">
+                                🚀 Отправить на обработку
+                            </button>
+                            <div id="phoenix-upload-progress" class="upload-progress hidden" style="margin-top: 12px;">
+                                <p>Загрузка: <span id="phoenix-progress-percent">0%</span></p>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="phoenix-progress-bar"></div>
+                                </div>
+                            </div>
+                            <div id="phoenix-upload-message" class="upload-message hidden" style="margin-top: 12px;"></div>
                         </div>
                     </div>
                 </div>

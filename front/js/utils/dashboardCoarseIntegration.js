@@ -3,6 +3,7 @@ import { CoarseGenerator } from './coarseGenerator.js';
 import { convertSimpegToProfiles, buildSimpegModelData, buildCoarseFromSimpeg } from './simpegProfilesConverter.js';
 import { showVolumeModal } from './resultViewer.js';
 import { showHint } from './onboardingHints.js';
+import { parseTbl, extractStationInfo, parseCalFile, calResponseCurves, matchCalFiles } from './phoenixParser.js';
 
 let generatorInstance = null;
 
@@ -38,6 +39,7 @@ export function initCoarseGenerator() {
     const importTabs = document.querySelectorAll('.import-tab');
     const tabProfiles = document.getElementById('tab-profiles');
     const tabSimpeg = document.getElementById('tab-simpeg');
+    const tabPhoenix = document.getElementById('tab-phoenix');
     const simpegUploadArea = document.getElementById('simpeg-upload-area');
     const simpegFileInput = document.getElementById('simpeg-file-input');
     const simpegControls = document.getElementById('simpeg-controls');
@@ -49,6 +51,24 @@ export function initCoarseGenerator() {
     const volumeCoarseBtn = document.getElementById('volume-coarse-btn');
     const simpegVolumeBtn = document.getElementById('simpeg-volume-btn');
 
+    // Phoenix Import Elements
+    const phoenixUploadArea = document.getElementById('phoenix-upload-area');
+    const phoenixFileInput = document.getElementById('phoenix-file-input');
+    const phoenixPreview = document.getElementById('phoenix-preview');
+    const phoenixStationInfo = document.getElementById('phoenix-station-info');
+    const phoenixCalCanvas = document.getElementById('phoenix-cal-canvas');
+    const phoenixCalLegend = document.getElementById('phoenix-cal-legend');
+    const phoenixResetBtn = document.getElementById('phoenix-reset-btn');
+    const phoenixSubmitBtn = document.getElementById('phoenix-submit-btn');
+    const phoenixProgress = document.getElementById('phoenix-upload-progress');
+    const phoenixProgressBar = document.getElementById('phoenix-progress-bar');
+    const phoenixProgressPercent = document.getElementById('phoenix-progress-percent');
+    const phoenixMessage = document.getElementById('phoenix-upload-message');
+    const phoenixLatInput = document.getElementById('phoenix-lat');
+    const phoenixLonInput = document.getElementById('phoenix-lon');
+    const phoenixElevInput = document.getElementById('phoenix-elev');
+    const phoenixDeclInput = document.getElementById('phoenix-decl');
+
     if (!profilesUploadArea) return; // Not on dashboard page
 
     let profilesData = null;
@@ -58,6 +78,11 @@ export function initCoarseGenerator() {
     let simpegProfilesFile = null;
     let simpegModelData = null;   // объёмная модель проводимости из .npz (ResultViewer format)
     let simpegNpz = null;         // разобранный .npz целиком (для Coarse.dat из сетки)
+
+    // Phoenix state
+    let phoenixZipBlob = null;
+    let phoenixStationData = null;
+    let phoenixCalCurves = [];
 
     // ===== Import Tabs Logic =====
     importTabs.forEach(tab => {
@@ -69,10 +94,9 @@ export function initCoarseGenerator() {
             tab.classList.add('active');
             
             // Update tab content
-            if (tabProfiles && tabSimpeg) {
-                tabProfiles.classList.toggle('active', targetTab === 'profiles');
-                tabSimpeg.classList.toggle('active', targetTab === 'simpeg');
-            }
+            if (tabProfiles) tabProfiles.classList.toggle('active', targetTab === 'profiles');
+            if (tabSimpeg) tabSimpeg.classList.toggle('active', targetTab === 'simpeg');
+            if (tabPhoenix) tabPhoenix.classList.toggle('active', targetTab === 'phoenix');
         });
     });
 
@@ -135,7 +159,7 @@ export function initCoarseGenerator() {
 
                 // Update UI
                 profilesUploadArea.innerHTML = `
-                    <div style="font-size: 2em; margin-bottom: 10px;">✅</div>
+                    <div style="font-size: 2em; margin-bottom: 10px;"></div>
                     <p><strong>${file.name}</strong></p>
                     <p style="font-size: 0.85em; color: var(--color-text-tertiary); margin-top: 8px;">
                         Загружено успешно
@@ -441,7 +465,7 @@ export function initCoarseGenerator() {
             const rhoMax = rhoVals.length ? Math.max(...rhoVals) : NaN;
 
             simpegUploadArea.innerHTML = `
-                <div style="font-size: 2em; margin-bottom: 10px;">✅</div>
+                <div style="font-size: 2em; margin-bottom: 10px;"></div>
                 <p><strong>${file.name}</strong></p>
                 <p style="font-size: 0.85em; color: var(--color-text-tertiary); margin-top: 8px;">
                     Прочитано: ${nFreq} периодов, ${nStations} станций
@@ -704,7 +728,7 @@ export function resetCoarseGenerator() {
 
     if (profilesUploadArea) {
         profilesUploadArea.innerHTML = `
-            <div style="font-size: 3em; margin-bottom: 10px;">📁</div>
+            <div style="font-size: 3em; margin-bottom: 10px;"></div>
             <h3>Drop Profiles.dat here or click to browse</h3>
             <p style="color: #999; margin-top: 10px;">Supported format: Profiles.dat (MT data file)</p>
         `;
@@ -772,5 +796,478 @@ export function resetCoarseGenerator() {
         gridEditedStatus.innerHTML = '';
     }
 
+    // Reset Phoenix UI elements (variables are local to initPhoenixImport, query DOM directly)
+    const phoenixPreview = document.getElementById('phoenix-preview');
+    const phoenixMessage = document.getElementById('phoenix-upload-message');
+    const phoenixProgress = document.getElementById('phoenix-upload-progress');
+    const phoenixFileInput = document.getElementById('phoenix-file-input');
+    if (phoenixPreview) phoenixPreview.classList.add('hidden');
+    if (phoenixMessage) {
+        phoenixMessage.textContent = '';
+        phoenixMessage.className = 'upload-message hidden';
+    }
+    if (phoenixProgress) phoenixProgress.classList.add('hidden');
+    if (phoenixFileInput) phoenixFileInput.value = '';
+
     console.log('[COARSE GENERATOR] State reset for new solution');
+}
+
+// ===== Phoenix Import Logic =====
+
+/**
+ * Инициализация обработчиков импорта Phoenix.
+ * Вызывается один раз при загрузке dashboard.
+ */
+export function initPhoenixImport() {
+    console.log('[PHOENIX] initPhoenixImport called');
+    const uploadArea = document.getElementById('phoenix-upload-area');
+    const fileInput = document.getElementById('phoenix-file-input');
+    console.log('[PHOENIX] uploadArea:', uploadArea ? 'found' : 'NOT FOUND');
+    console.log('[PHOENIX] fileInput:', fileInput ? 'found' : 'NOT FOUND');
+    const preview = document.getElementById('phoenix-preview');
+    const stationInfo = document.getElementById('phoenix-station-info');
+    const calCanvas = document.getElementById('phoenix-cal-canvas');
+    const calLegend = document.getElementById('phoenix-cal-legend');
+    const resetBtn = document.getElementById('phoenix-reset-btn');
+    const submitBtn = document.getElementById('phoenix-submit-btn');
+    const progressEl = document.getElementById('phoenix-upload-progress');
+    const progressBar = document.getElementById('phoenix-progress-bar');
+    const progressPercent = document.getElementById('phoenix-progress-percent');
+    const messageEl = document.getElementById('phoenix-upload-message');
+    const latInput = document.getElementById('phoenix-lat');
+    const lonInput = document.getElementById('phoenix-lon');
+    const elevInput = document.getElementById('phoenix-elev');
+    const declInput = document.getElementById('phoenix-decl');
+
+    if (!uploadArea || !fileInput) {
+        console.warn('[PHOENIX] Upload area or file input not found in DOM — Phoenix import disabled');
+        return;
+    }
+
+    let zipBlob = null;
+    let stationData = null;
+    let calCurvesList = [];
+
+    // Click to upload
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    // Drag and drop
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = 'var(--color-warning)';
+    });
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.style.borderColor = '';
+    });
+    uploadArea.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '';
+        const files = e.dataTransfer.files;
+        if (files.length > 0 && files[0].name.toLowerCase().endsWith('.zip')) {
+            await handlePhoenixZip(files[0]);
+        } else {
+            showMessage('Пожалуйста, загрузите .zip архив', 'error');
+        }
+    });
+
+    // File input change
+    fileInput.addEventListener('change', async (e) => {
+        if (e.target.files.length > 0) {
+            await handlePhoenixZip(e.target.files[0]);
+        }
+    });
+
+    // Reset button
+    resetBtn?.addEventListener('click', () => {
+        zipBlob = null;
+        stationData = null;
+        calCurvesList = [];
+        preview.classList.add('hidden');
+        fileInput.value = '';
+        showMessage('', '');
+        progressEl?.classList.add('hidden');
+    });
+
+    // Submit button
+    submitBtn?.addEventListener('click', async () => {
+        if (!zipBlob) {
+            showMessage('Сначала загрузите архив', 'error');
+            return;
+        }
+        await submitPhoenixData();
+    });
+
+    /**
+     * Обработка загруженного zip-архива Phoenix.
+     */
+    async function handlePhoenixZip(file) {
+        try {
+            showMessage('Распаковка архива...', 'info');
+            zipBlob = file;
+
+            // Динамический импорт JSZip (уже загружен в dashboard.html, но используем dynamic для безопасности)
+            const JSZip = window.JSZip;
+            if (!JSZip) {
+                showMessage('Ошибка: JSZip не загружен', 'error');
+                return;
+            }
+
+            const zip = await JSZip.loadAsync(file);
+            const fileNames = Object.keys(zip.files);
+
+            // Найти TBL файл
+            const tblPath = fileNames.find(n => n.toUpperCase().endsWith('.TBL'));
+            if (!tblPath) {
+                showMessage('Архив не содержит .TBL файла', 'error');
+                return;
+            }
+
+            // Парсинг TBL
+            const tblBuffer = await zip.file(tblPath).async('arraybuffer');
+            const tblRecords = parseTbl(tblBuffer);
+            stationData = extractStationInfo(tblRecords);
+
+            // Найти Cal файлы
+            const calPaths = fileNames.filter(n => {
+                const upper = n.toUpperCase();
+                return (upper.endsWith('.CLC') || upper.endsWith('.CLB') || upper.endsWith('.CLE'))
+                    && upper.includes('CAL');
+            });
+
+            // Парсинг калибровок
+            calCurvesList = [];
+            for (const calPath of calPaths) {
+                try {
+                    const calBuffer = await zip.file(calPath).async('arraybuffer');
+                    const calData = parseCalFile(calBuffer);
+                    const curves = calResponseCurves(calData);
+                    if (curves && curves.length > 0) {
+                        const fileName = calPath.split('/').pop() || calPath;
+                        calCurvesList.push({ name: fileName, curves });
+                    }
+                } catch (err) {
+                    console.warn(`[PHOENIX] Failed to parse cal file ${calPath}:`, err);
+                }
+            }
+
+            // Заполнить UI
+            populateStationInfo(stationData);
+            drawCalCurves(calCurvesList);
+            fillEditableFields(stationData);
+
+            preview.classList.remove('hidden');
+            showMessage('Архив успешно распознан. Проверьте данные и нажмите «Отправить».', 'success');
+
+        } catch (err) {
+            console.error('[PHOENIX] Zip processing error:', err);
+            showMessage(`Ошибка обработки архива: ${err.message}`, 'error');
+        }
+    }
+
+    /**
+     * Отображение информации о станции.
+     */
+    function populateStationInfo(info) {
+        if (!stationInfo || !info) return;
+        const rows = [
+            ['Станция', info.stationId || '—'],
+            ['Прибор', `${info.instrument || '—'} (FW: ${info.firmware || '—'})`],
+            ['Координаты', `${info.latitude?.toFixed(4) ?? '—'}°N, ${info.longitude?.toFixed(4) ?? '—'}°E`],
+            ['Высота', info.elevation != null ? `${info.elevation} м` : '—'],
+            ['Длина диполей', `Ex=${info.exLength ?? '?'} м, Ey=${info.eyLength ?? '?'} м`],
+            ['Магнитные датчики', `Hx=${info.hxSensor || '—'}, Hy=${info.hySensor || '—'}, Hz=${info.hzSensor || '—'}`],
+            ['Начало записи', info.startTime || '—'],
+            ['Частота дискретизации', info.sampleRate ? `${info.sampleRate} Гц` : '—'],
+            ['Магн. склонение', info.declination != null ? `${info.declination}°` : '—'],
+        ];
+        stationInfo.innerHTML = rows.map(([k, v]) =>
+            `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--color-border-light);">
+                <span style="color:var(--color-text-secondary);font-size:var(--text-sm);">${k}</span>
+                <span style="font-weight:500;font-size:var(--text-sm);">${v}</span>
+            </div>`
+        ).join('');
+    }
+
+    /**
+     * Отрисовка калибровочных кривых на canvas.
+     */
+    function drawCalCurves(curvesList) {
+        if (!calCanvas || curvesList.length === 0) {
+            if (calLegend) calLegend.textContent = 'Калибровочные кривые не найдены в архиве';
+            return;
+        }
+
+        const ctx = calCanvas.getContext('2d');
+        const W = calCanvas.width;
+        const H = calCanvas.height;
+        const pad = { top: 30, right: 20, bottom: 40, left: 60 };
+        const plotW = W - pad.left - pad.right;
+        const plotH = H - pad.top - pad.bottom;
+
+        ctx.clearRect(0, 0, W, H);
+
+        // Собрать все точки для определения диапазона
+        let allFreqs = [];
+        let allAmps = [];
+        let allPhases = [];
+        const colors = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c'];
+
+        for (const entry of curvesList) {
+            for (const curve of entry.curves) {
+                if (curve.frequencies) allFreqs.push(...curve.frequencies);
+                if (curve.amplitudes) allAmps.push(...curve.amplitudes);
+                if (curve.phases) allPhases.push(...curve.phases);
+            }
+        }
+
+        if (allFreqs.length === 0) {
+            if (calLegend) calLegend.textContent = 'Нет данных для отрисовки';
+            return;
+        }
+
+        const fMin = Math.min(...allFreqs.filter(f => f > 0));
+        const fMax = Math.max(...allFreqs);
+        const logFMin = Math.log10(fMin);
+        const logFMax = Math.log10(fMax);
+
+        // Амплитуда
+        const ampMin = Math.min(...allAmps);
+        const ampMax = Math.max(...allAmps);
+        const ampRange = ampMax - ampMin || 1;
+
+        // Фаза
+        const phMin = Math.min(...allPhases);
+        const phMax = Math.max(...allPhases);
+        const phRange = phMax - phMin || 1;
+
+        // Оси
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, pad.top);
+        ctx.lineTo(pad.left, H - pad.bottom);
+        ctx.lineTo(W - pad.right, H - pad.bottom);
+        ctx.stroke();
+
+        // Подписи осей
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Частота (Гц)', W / 2, H - 5);
+
+        ctx.save();
+        ctx.translate(14, H / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText('|H(f)| / φ(f)', 0, 0);
+        ctx.restore();
+
+        // Логарифмические метки частоты
+        const logTicks = [];
+        for (let p = Math.floor(logFMin); p <= Math.ceil(logFMax); p++) {
+            logTicks.push(p);
+        }
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px sans-serif';
+        for (const p of logTicks) {
+            const x = pad.left + ((p - logFMin) / (logFMax - logFMin)) * plotW;
+            if (x >= pad.left && x <= W - pad.right) {
+                ctx.fillText(`10^${p}`, x, H - pad.bottom + 14);
+                ctx.strokeStyle = '#e2e8f0';
+                ctx.beginPath();
+                ctx.moveTo(x, pad.top);
+                ctx.lineTo(x, H - pad.bottom);
+                ctx.stroke();
+            }
+        }
+
+        // Рисуем кривые
+        let colorIdx = 0;
+        const legendParts = [];
+
+        for (const entry of curvesList) {
+            for (const curve of entry.curves) {
+                const color = colors[colorIdx % colors.length];
+                colorIdx++;
+
+                // Амплитуда (сплошная линия)
+                if (curve.frequencies && curve.amplitudes && curve.frequencies.length > 0) {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    for (let i = 0; i < curve.frequencies.length; i++) {
+                        const f = curve.frequencies[i];
+                        if (f <= 0) continue;
+                        const x = pad.left + ((Math.log10(f) - logFMin) / (logFMax - logFMin)) * plotW;
+                        const y = pad.top + plotH - ((curve.amplitudes[i] - ampMin) / ampRange) * plotH;
+                        if (i === 0 || curve.frequencies[i - 1] <= 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                }
+
+                // Фаза (пунктирная линия)
+                if (curve.frequencies && curve.phases && curve.frequencies.length > 0) {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    for (let i = 0; i < curve.frequencies.length; i++) {
+                        const f = curve.frequencies[i];
+                        if (f <= 0) continue;
+                        const x = pad.left + ((Math.log10(f) - logFMin) / (logFMax - logFMin)) * plotW;
+                        const y = pad.top + plotH - ((curve.phases[i] - phMin) / phRange) * plotH;
+                        if (i === 0 || curve.frequencies[i - 1] <= 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                legendParts.push(`<span style="color:${color};">■</span> ${entry.name}`);
+            }
+        }
+
+        if (calLegend) {
+            calLegend.innerHTML = legendParts.join(' &nbsp;|&nbsp; ') +
+                ' <span style="color:#94a3b8;">(сплошная = амплитуда, пунктир = фаза)</span>';
+        }
+    }
+
+    /**
+     * Заполнение редактируемых полей из распарсенных данных.
+     */
+    function fillEditableFields(info) {
+        if (!info) return;
+        if (latInput && info.latitude != null) latInput.value = info.latitude.toFixed(4);
+        if (lonInput && info.longitude != null) lonInput.value = info.longitude.toFixed(4);
+        if (elevInput && info.elevation != null) elevInput.value = info.elevation;
+        if (declInput && info.declination != null) declInput.value = info.declination;
+    }
+
+    /**
+     * Отправка архива и метаданных на сервер.
+     */
+    async function submitPhoenixData() {
+        const solutionId = getCurrentSolutionId();
+        if (!solutionId) {
+            showMessage('Не выбрана задача. Создайте новую задачу или выберите существующую.', 'error');
+            return;
+        }
+
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+            showMessage('Необходима авторизация', 'error');
+            return;
+        }
+
+        // Собрать отредактированные метаданные
+        const metadata = {
+            latitude: parseFloat(latInput?.value) || stationData?.latitude,
+            longitude: parseFloat(lonInput?.value) || stationData?.longitude,
+            elevation: parseFloat(elevInput?.value) || stationData?.elevation,
+            declination: parseFloat(declInput?.value) || stationData?.declination,
+            stationId: stationData?.stationId,
+            instrument: stationData?.instrument,
+            firmware: stationData?.firmware,
+            startTime: stationData?.startTime,
+            exLength: stationData?.exLength,
+            eyLength: stationData?.eyLength,
+            hxSensor: stationData?.hxSensor,
+            hySensor: stationData?.hySensor,
+            hzSensor: stationData?.hzSensor,
+            sampleRate: stationData?.sampleRate,
+        };
+
+        const formData = new FormData();
+        formData.append('file', zipBlob, zipBlob.name || 'phoenix_data.zip');
+        formData.append('metadata', JSON.stringify(metadata));
+
+        progressEl?.classList.remove('hidden');
+        submitBtn.disabled = true;
+        submitBtn.textContent = '⏳ Загрузка...';
+
+        try {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `/api/users/self/solutions/${solutionId}/raw-upload`);
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    if (progressBar) progressBar.style.width = `${pct}%`;
+                    if (progressPercent) progressPercent.textContent = `${pct}%`;
+                }
+            };
+
+            xhr.onload = () => {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '🚀 Отправить на обработку';
+                progressEl?.classList.add('hidden');
+
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        const resp = JSON.parse(xhr.responseText);
+                        showMessage(` Архив загружен! Task ID: ${resp.task_id || '—'}. Данные поставлены в очередь на обработку.`, 'success');
+                        showHint('phoenix-submitted', submitBtn, 'Архив отправлен! Отслеживайте статус задачи в списке решений.', { position: 'top', autoHideMs: 6000 });
+                    } catch {
+                        showMessage(' Архив загружен успешно!', 'success');
+                    }
+                } else {
+                    let errMsg = `Ошибка сервера (${xhr.status})`;
+                    try {
+                        const err = JSON.parse(xhr.responseText);
+                        errMsg = err.error || err.message || errMsg;
+                    } catch {}
+                    showMessage(errMsg, 'error');
+                }
+            };
+
+            xhr.onerror = () => {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '🚀 Отправить на обработку';
+                progressEl?.classList.add('hidden');
+                showMessage('Ошибка сети при загрузке', 'error');
+            };
+
+            xhr.send(formData);
+
+        } catch (err) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '🚀 Отправить на обработку';
+            progressEl?.classList.add('hidden');
+            showMessage(`Ошибка: ${err.message}`, 'error');
+        }
+    }
+
+    /**
+     * Показать сообщение пользователю.
+     */
+    function showMessage(text, type) {
+        if (!messageEl) return;
+        messageEl.textContent = text;
+        messageEl.className = 'upload-message';
+        if (type === 'error') messageEl.classList.add('error');
+        else if (type === 'success') messageEl.classList.add('success');
+        else if (type === 'info') messageEl.classList.add('info');
+        if (!text) messageEl.classList.add('hidden');
+    }
+
+    /**
+     * Получить ID текущей выбранной задачи.
+     */
+    function getCurrentSolutionId() {
+        // Проверяем URL параметр
+        const urlParams = new URLSearchParams(window.location.search);
+        const fromUrl = urlParams.get('solutionId');
+        if (fromUrl) return fromUrl;
+
+        // Проверяем localStorage
+        const fromStorage = localStorage.getItem('currentSolutionId');
+        if (fromStorage) return fromStorage;
+
+        // Проверяем глобальную переменную (устанавливается dashboard.js)
+        if (window.currentSolutionId) return window.currentSolutionId;
+
+        return null;
+    }
 }

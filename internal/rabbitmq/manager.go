@@ -24,13 +24,23 @@ import (
 // повтор происходит при следующем обращении.
 var reconnectPauses = []time.Duration{0, time.Second, 2 * time.Second}
 
+// Имена очередей (единый источник для сервера и потребителей).
+const (
+	// QueueCalculation — очередь инверсии (существующий потребитель MTZ_MSQ).
+	QueueCalculation = "calculation_tasks"
+	// QueuePhoenixConversion — очередь конвертации сырых данных Phoenix
+	// (временные ряды → компоненты импеданса); потребитель MTZ_PHX после
+	// конвертации пересылает задачу в QueueCalculation.
+	QueuePhoenixConversion = "phoenix_conversion_tasks"
+)
+
 // Manager — потокобезопасный провайдер соединения с RabbitMQ.
 // Channel() всегда возвращает живой канал: если прежнее соединение закрыто,
-// оно пересоздаётся (вместе с декларированием очереди).
+// оно пересоздаётся (вместе с декларированием всех очередей).
 type Manager struct {
-	url       string
-	queueName string
-	logger    *logging.Logger
+	url    string
+	queues []string
+	logger *logging.Logger
 
 	mu   sync.Mutex
 	conn *amqp.Connection
@@ -40,7 +50,20 @@ type Manager struct {
 // NewManager создаёт менеджер. Соединение устанавливается лениво —
 // при первом вызове Channel(), поэтому старт сервера не зависит от брокера.
 func NewManager(url, queueName string, logger *logging.Logger) *Manager {
-	return &Manager{url: url, queueName: queueName, logger: logger}
+	return &Manager{url: url, queues: []string{queueName}, logger: logger}
+}
+
+// AddQueue добавляет очередь к списку декларируемых при каждом
+// (пере)подключении. Вызывать до первого Channel().
+func (m *Manager) AddQueue(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, q := range m.queues {
+		if q == name {
+			return
+		}
+	}
+	m.queues = append(m.queues, name)
 }
 
 // Channel возвращает живой канал RabbitMQ, переподключаясь при необходимости.
@@ -81,16 +104,25 @@ func (m *Manager) reconnectLocked() (*amqp.Channel, error) {
 			lastErr = err
 			continue
 		}
-		// Очередь декларируется идемпотентно: это переживает и перезапуск
+		// Очереди декларируются идемпотентно: это переживает и перезапуск
 		// брокера (durable), и смену соединения
-		if _, err := ch.QueueDeclare(m.queueName, true, false, false, false, nil); err != nil {
+		declared := make([]string, 0, len(m.queues))
+		declareFailed := false
+		for _, q := range m.queues {
+			if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil {
+				lastErr = err
+				declareFailed = true
+				break
+			}
+			declared = append(declared, q)
+		}
+		if declareFailed {
 			_ = ch.Close()
 			_ = conn.Close()
-			lastErr = err
 			continue
 		}
 		m.conn, m.ch = conn, ch
-		m.logger.Infof("[RABBIT] Connected (attempt %d/%d), queue %q declared", i+1, len(reconnectPauses), m.queueName)
+		m.logger.Infof("[RABBIT] Connected (attempt %d/%d), queues %v declared", i+1, len(reconnectPauses), declared)
 		go m.watchClose(conn)
 		return ch, nil
 	}

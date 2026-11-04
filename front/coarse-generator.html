@@ -224,7 +224,7 @@
         <p class="subtitle">Upload Profiles.dat and automatically generate Coarse.dat file</p>
 
         <div class="upload-area" id="uploadArea">
-            <div class="upload-icon">📁</div>
+            <div class="upload-icon"></div>
             <h3>Drop Profiles.dat here or click to browse</h3>
             <p style="color: #999; margin-top: 10px;">Supported format: Profiles.dat (MT data file)</p>
             <input type="file" id="fileInput" accept=".dat">
@@ -337,7 +337,7 @@
                     const stats = analyzeProfilesData(profilesData);
 
                     uploadArea.innerHTML = `
-                        <div class="upload-icon">✅</div>
+                        <div class="upload-icon"></div>
                         <h3>${file.name}</h3>
                         <div class="file-info">
                             <strong>Stations:</strong> ${stats.numStations}<br>
@@ -445,7 +445,7 @@
                 downloadFile('Coarse.dat', content);
 
                 setProgress(100);
-                showStatus('success', `✅ Coarse.dat generated successfully! Grid: ${config.nX}×${config.nY}×${config.nZ}`);
+                showStatus('success', ` Coarse.dat generated successfully! Grid: ${config.nX}×${config.nY}×${config.nZ}`);
 
                 setTimeout(() => {
                     progressBar.style.display = 'none';
