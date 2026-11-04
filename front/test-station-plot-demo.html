@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Демо схемы станций (Phoenix)</title>
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+  body { padding: 16px; background: var(--color-bg-primary); }
+  .wrap { max-width: 900px; }
+  .phoenix-station-map { height: 320px; width: 100%; border-radius: var(--radius-md);
+    border: 1px solid var(--color-border); background: var(--color-bg-secondary); position: relative; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h3>Демо физической схемы станций (вид сверху)</h3>
+  <div id="map" class="phoenix-station-map"></div>
+</div>
+<script type="module">
+  import { stationPlotLayout, drawStationPlot } from '/js/import/phoenix/stationPlot.js';
+  const stations = [
+    { stationId: '1369712A', latitude: 56.0000, longitude: 99.0000 },
+    { stationId: '1369712B', latitude: 56.0085, longitude: 99.0130 },
+    { stationId: '1369713A', latitude: 56.0150, longitude: 99.0045 },
+    { stationId: '1369714C', latitude: 56.0045, longitude: 99.0215 },
+    { stationId: '1369715D', latitude: 56.0110, longitude: 99.0090 },
+  ];
+  const map = document.getElementById('map');
+  const canvas = document.createElement('canvas');
+  canvas.className = 'phoenix-station-plot';
+  canvas.style.cssText = 'position:absolute;left:0;top:0;display:block;width:100%;height:100%;';
+  map.appendChild(canvas);
+  function draw() {
+    const w = map.clientWidth, h = map.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const L = stationPlotLayout(stations, w, h, 34);
+    drawStationPlot(ctx, L, { activeIndex: 1, width: w, height: h });
+  }
+  draw();
+  new ResizeObserver(draw).observe(map);
+</script>
+</body>
+</html>

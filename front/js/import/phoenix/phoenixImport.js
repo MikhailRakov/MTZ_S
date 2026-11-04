@@ -1,5 +1,6 @@
 // Import UI: сырые данные Phoenix MT (.zip с .TBL + Cal/*)
-import { parseTbl, extractStationInfo, parseCalFile, calResponseCurves, buildStationList, mapViewForStations } from './phoenixParser.js';
+import { parseTbl, extractStationInfo, parseCalFile, calResponseCurves, buildStationList } from './phoenixParser.js';
+import { stationPlotLayout, findNearestStationPoint, drawStationPlot } from './stationPlot.js';
 import { showHint } from '../../utils/onboardingHints.js';
 import { getCurrentSolutionID } from '../../utils/currentSolution.js';
 
@@ -12,30 +13,19 @@ let _calCanvasRef = null;
  * (амплитуда/фаза меняются → диапазон меняется → точка снова на краю).
  */
 let _calFrozenRanges = null;
-/** Экземпляр карты станций Leaflet (для уничтожения при сбросе) */
-let _stationMapInstance = null;
-/** Маркеры станций на карте (по индексу станции; null — станция без координат) */
-let _mapMarkers = [];
-
-/** Стиль маркера станции: активная — крупная красная. */
-function leafletMarkerStyle(active) {
-    return {
-        radius: active ? 9 : 6,
-        color: active ? '#dc2626' : '#2563eb',
-        fillColor: active ? '#ef4444' : '#3b82f6',
-        fillOpacity: 0.9,
-        weight: 2,
-    };
-}
+/** Текущий layout схемы (нужен для попадания клика по точке) */
+let _stationPlotLayout = null;
+/** Наблюдатель размеров контейнера схемы (перерисовка при resize) */
+let _stationPlotObserver = null;
 
 /**
- * Уничтожить карту станций (сброс/смена решения). Безопасно вызывать без карты.
+ * Уничтожить схему расположения станций (сброс/смена решения). Безопасно вызывать без схемы.
  */
 export function destroyStationMap() {
-    _mapMarkers = [];
-    if (_stationMapInstance) {
-        try { _stationMapInstance.remove(); } catch (e) { /* уже удалена */ }
-        _stationMapInstance = null;
+    _stationPlotLayout = null;
+    if (_stationPlotObserver) {
+        _stationPlotObserver.disconnect();
+        _stationPlotObserver = null;
     }
     const div = document.getElementById('phoenix-station-map');
     if (div) {
@@ -238,35 +228,6 @@ export function disableCalCurvesEditor() {
 }
 
 /** Сброс Phoenix UI при переключении решений (переменные локальны для initPhoenixImport, запрошиваем DOM напрямую) */
-/**
- * Ленивая загрузка Leaflet (только когда пользователь реально открыл карту Phoenix).
- * Кэшируется в _leafletLoadPromise; при офлайне — reject (в UI показывается fallback).
- */
-let _leafletLoadPromise = null;
-function ensureLeaflet() {
-    if (typeof document === 'undefined') return Promise.reject(new Error('no DOM'));
-    if (window.L) return Promise.resolve();
-    if (!_leafletLoadPromise) {
-        _leafletLoadPromise = new Promise((resolve, reject) => {
-            const css = document.createElement('link');
-            css.rel = 'stylesheet';
-            css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-            css.crossOrigin = 'anonymous';
-            document.head.appendChild(css);
-            const js = document.createElement('script');
-            js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-            js.crossOrigin = 'anonymous';
-            js.onload = () => resolve();
-            js.onerror = () => {
-                _leafletLoadPromise = null; // можно попробовать снова при следующем открытии
-                reject(new Error('Leaflet load failed'));
-            };
-            document.head.appendChild(js);
-        });
-    }
-    return _leafletLoadPromise;
-}
-
 /** Хук сброса состояния замыкания initPhoenixImport (ставится при инициализации) */
 let _closureResetHook = null;
 
@@ -334,7 +295,6 @@ export function initPhoenixImport() {
     let stations = [];             // нормализованный список (buildStationList)
     let activeStationIdx = 0;
     let selectedCurveIdx = -1;     // -1 = редактируем все кривые
-    let mapMarkers = [];           // Leaflet-маркеры по индексам станций
 
     // Click to upload
     uploadArea.addEventListener('click', () => fileInput.click());
@@ -480,13 +440,13 @@ export function initPhoenixImport() {
                 }
             }
 
-            // Заполнить UI: станции, кривые, карту
+            // Заполнить UI: станции, кривые, схему расположения
             populateStationSelect();
             selectStation(0);
             selectedCurveIdx = -1;
             populateCurveSelect();
             drawCalCurves(calCurvesList);
-            initOrUpdateStationMap();
+            renderStationPlot();
 
             preview.classList.remove('hidden');
             showMessage('Архив успешно распознан. Проверьте данные и нажмите «Отправить».', 'success');
@@ -498,53 +458,100 @@ export function initPhoenixImport() {
     }
 
     /**
-     * Создать/пересоздать карту станций наблюдений (Leaflet грузится лениво).
-     * Без сети или без валидных координат — текстовый fallback.
+     * Отрисовать схему расположения станций (вид сверху, физические метры).
+     * Работает офлайн: canvas + собственная отрисовка, без внешних карт.
      */
-    async function initOrUpdateStationMap() {
+    function renderStationPlot() {
         if (!mapDiv) return;
-        destroyStationMap();
-        const view = mapViewForStations(stations);
-        if (!view) {
-            mapDiv.classList.add('phoenix-map-fallback');
-            mapDiv.innerHTML = '<div class="phoenix-map-fallback-inner">Ни одна станция в архиве не имеет валидных координат — карту показать нельзя.</div>';
-            return;
+        const canvas = ensureStationPlotCanvas();
+        if (!canvas) return;
+
+        // Размеры берём из контейнера (canvas позиционирован абсолютно и не влияет на его высоту).
+        const cssW = Math.max(320, mapDiv.clientWidth || Math.round(mapDiv.getBoundingClientRect().width) || 600);
+        let cssH = Math.round(mapDiv.getBoundingClientRect().height);
+        if (cssH < 40) {
+            // Контейнер без заданной высоты (нет стилей) — задаём минимальный размер один раз.
+            cssH = 260;
+            mapDiv.style.height = cssH + 'px';
         }
-        mapDiv.classList.add('phoenix-map-fallback');
-        mapDiv.innerHTML = '<div class="phoenix-map-fallback-inner">🗺️ Карта загружается…</div>';
-        try {
-            await ensureLeaflet();
-        } catch {
-            mapDiv.innerHTML = '<div class="phoenix-map-fallback-inner">🗺️ Карта недоступна: не удалось загрузить Leaflet (нужен интернет). Координаты станций — в полях ниже.</div>';
+        cssH = Math.max(180, cssH);
+
+        const layout = stationPlotLayout(stations, cssW, cssH, 34);
+        const note = document.getElementById('phoenix-station-plot-note');
+        if (!layout) {
+            mapDiv.classList.add('phoenix-map-fallback');
+            mapDiv.innerHTML = '<div class="phoenix-map-fallback-inner">Ни одна станция в архиве не имеет валидных координат — схему показать нельзя.</div>';
+            _stationPlotLayout = null;
+            if (note) {
+                note.textContent = '';
+                note.style.display = 'none';
+            }
             return;
         }
         mapDiv.classList.remove('phoenix-map-fallback');
-        mapDiv.innerHTML = '';
-        _stationMapInstance = window.L.map(mapDiv, { scrollWheelZoom: false });
-        _stationMapInstance.setView(view.center, view.zoom);
-        window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            attribution: '&copy; OpenStreetMap contributors',
-        }).addTo(_stationMapInstance);
-        _mapMarkers = stations.map((s, i) => {
-            if (!Number.isFinite(s.latitude) || !Number.isFinite(s.longitude)) return null;
-            const m = window.L.circleMarker([s.latitude, s.longitude], leafletMarkerStyle(i === activeStationIdx))
-                .addTo(_stationMapInstance);
-            m.bindTooltip(`Станция ${s.stationId}`, { direction: 'top', offset: [0, -8] });
-            m.on('click', () => selectStation(i));
-            return m;
-        });
-        // Перерисовка тайлов после проявления панели (контейнер мог быть скрыт)
-        setTimeout(() => { if (_stationMapInstance) _stationMapInstance.invalidateSize(); }, 100);
+
+        // Какие станции не попали на схему (нет координат) — показываем подпись под схемой.
+        if (note) {
+            const noCoords = stations.filter(s => !Number.isFinite(s.latitude) || !Number.isFinite(s.longitude));
+            note.textContent = noCoords.length
+                ? `Без координат (на схеме не показаны): ${noCoords.map(s => s.stationId || '—').join(', ')}`
+                : '';
+            note.style.display = noCoords.length ? '' : 'none';
+        }
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        drawStationPlot(ctx, layout, { activeIndex: activeStationIdx, width: cssW, height: cssH });
+        _stationPlotLayout = layout;
     }
 
-    /** Подсветить активный маркер станции. */
-    function refreshMapMarkerStyles() {
-        if (!_stationMapInstance) return;
-        stations.forEach((s, i) => {
-            const m = _mapMarkers[i];
-            if (m) m.setStyle(leafletMarkerStyle(i === activeStationIdx));
-        });
+    /**
+     * Создать canvas схемы внутри контейнера (однократно) и навесить обработчики.
+     */
+    function ensureStationPlotCanvas() {
+        if (!mapDiv) return null;
+        let canvas = mapDiv.querySelector('canvas.phoenix-station-plot');
+        if (!canvas) {
+            canvas = document.createElement('canvas');
+            canvas.className = 'phoenix-station-plot';
+            // Позиционируем canvas абсолютно: его размеры не должны влиять на высоту контейнера
+            // (иначе контейнер растёт вместе с canvas по кругу).
+            canvas.style.cssText = 'position:absolute;left:0;top:0;display:block;width:100%;height:100%;touch-action:manipulation;cursor:pointer;';
+            mapDiv.innerHTML = '';
+            mapDiv.appendChild(canvas);
+            // Контейнер должен быть позиционирован и обрезать содержимое (canvas не должен «вылезать»).
+            const mcs = window.getComputedStyle(mapDiv);
+            if (mcs.position === 'static') mapDiv.style.position = 'relative';
+            if (mcs.overflow === 'visible') mapDiv.style.overflow = 'hidden';
+            canvas.addEventListener('click', onStationPlotClick);
+            // Перерисовка при изменении размеров контейнера (resize окна, смена вкладки)
+            if (typeof ResizeObserver !== 'undefined') {
+                _stationPlotObserver = new ResizeObserver(() => renderStationPlot());
+                _stationPlotObserver.observe(mapDiv);
+            }
+        }
+        return canvas;
+    }
+
+    /**
+     * Клик по схеме → выбрать ближайшую станцию.
+     */
+    function onStationPlotClick(e) {
+        const layout = _stationPlotLayout;
+        if (!layout) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const x = (e.clientX - rect.left) * (layout.width / rect.width);
+        const y = (e.clientY - rect.top) * (layout.height / rect.height);
+        const hit = findNearestStationPoint(x, y, layout, 16);
+        if (hit) selectStation(hit.index);
     }
 
     /**
@@ -591,7 +598,7 @@ export function initPhoenixImport() {
     }
 
     /**
-     * Сделать станцию idx активной: обновить инфо-блок, поля формы, селектор, маркеры карты.
+     * Сделать станцию idx активной: обновить инфо-блок, поля формы, селектор, схему расположения.
      */
     function selectStation(idx) {
         if (idx < 0 || idx >= stations.length) return;
@@ -600,7 +607,7 @@ export function initPhoenixImport() {
         populateStationInfo(stationData);
         fillEditableFields(stationData);
         if (stationSelect) stationSelect.value = String(idx);
-        refreshMapMarkerStyles();
+        renderStationPlot();
     }
 
     /**

@@ -2,12 +2,12 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Smoke: Phoenix карта станций + выбор кривой</title>
+    <title>Smoke: Phoenix схема станций + выбор кривой</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>body { font-family: sans-serif; margin: 20px; } #status { white-space: pre-wrap; font-family: monospace; background:#f4f4f4; padding:8px; }</style>
 </head>
 <body>
-    <h3>Smoke-тест: карта станций + выбор кривой (реальная разметка dashboard.html)</h3>
+    <h3>Smoke-тест: схема расположения станций + выбор кривой (реальная разметка dashboard.html)</h3>
     <div id="status">init…</div>
     <div id="phoenix-host"></div>
 
@@ -68,9 +68,22 @@
             for (let i = 3; i < d.length; i += 4000) if (d[i] > 0) return true;
             return false;
         })());
-        log('leaflet загрузился: ' + (!!window.L));
-        log('map контейнер инициализирован: ' + (!!map.querySelector('.leaflet-map-pane')));
-        log('маркеров станций: ' + map.querySelectorAll('.leaflet-marker-pane path, .leaflet-overlay-pane path').length);
+        log('схема станций: canvas создан: ' + (!!map.querySelector('canvas.phoenix-station-plot')));
+        log('схема нарисована (есть пиксели не фона): ' + (() => {
+            const sc = map.querySelector('canvas.phoenix-station-plot');
+            if (!sc) return 'нет canvas';
+            const sctx = sc.getContext('2d', { willReadFrequently: true });
+            const sd = sctx.getImageData(0, 0, sc.width, sc.height).data;
+            let n = 0;
+            for (let i = 3; i < sd.length; i += 4) if (sd[i] > 0) n++;
+            return n > 100 ? 'да (' + n + ' px)' : 'нет (' + n + ' px)';
+        })());
+        log('leaflet не используется (window.L=' + typeof window.L + ')');
+        log('схема: размер canvas (device px): ' + (() => {
+            const sc = map.querySelector('canvas.phoenix-station-plot');
+            return sc ? sc.width + 'x' + sc.height : 'нет canvas';
+        })());
+        log('подпись «без координат»: ' + (host.querySelector('#phoenix-station-plot-note')?.textContent || '(нет)'));
 
         // 7. Выбор конкретной кривой → событие change не должно ронять редактор
         if (curSel.options.length > 1) {

@@ -305,6 +305,8 @@ export function buildStationList(infos, fallbackNames) {
  * 1 станция → центр на ней, zoom 8. Несколько → центр bbox, zoom по максимальному разбросу:
  * ≥5°→4, ≥2°→5, ≥0.5°→6, ≥0.1°→7, иначе 8. Станции без координат игнорируются.
  * @returns {{center: [number, number], zoom: number}|null} null — если валидных станций нет
+ * @deprecated Географическая карта заменена физической схемой (front/js/import/phoenix/stationPlot.js).
+ *   Оставлено для обратной совместимости и возможных внешних потребителей.
  */
 export function mapViewForStations(stations) {
     if (!Array.isArray(stations)) return null;
