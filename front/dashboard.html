@@ -269,10 +269,23 @@
                                     <button type="button" id="phoenix-reset-btn" class="btn btn-secondary btn-sm">↺ Сбросить</button>
                                 </div>
                             </div>
+                            <div class="phoenix-station-row" style="margin-top: 12px; display: flex; align-items: center; gap: 10px;">
+                                <label for="phoenix-station-select" style="font-size: var(--text-sm); color: var(--color-text-secondary);">Станция:</label>
+                                <select id="phoenix-station-select" style="flex: 1; max-width: 260px;"></select>
+                                <span style="font-size: var(--text-xs); color: var(--color-text-tertiary);">выберите, чтобы редактировать данные конкретной станции</span>
+                            </div>
                             <div id="phoenix-station-info" class="profiles-info" style="margin-top: 12px;"></div>
+                            <div id="phoenix-map-block" style="margin-top: 16px;">
+                                <h5 style="margin: 0 0 8px 0; color: var(--color-text-secondary);">🗺️ Карта станций наблюдений</h5>
+                                <div id="phoenix-station-map" class="phoenix-station-map"></div>
+                            </div>
                             <div id="phoenix-cal-curves" style="margin-top: 16px;">
                                 <h5 style="margin: 0 0 8px 0; color: var(--color-text-secondary);">Калибровочные кривые катушек</h5>
-                                <canvas id="phoenix-cal-canvas" width="600" height="260" style="width: 100%; max-width: 600px; background: var(--color-bg-tertiary); border-radius: var(--radius-md);"></canvas>
+                                <div class="phoenix-curve-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                                    <label for="phoenix-curve-select" style="font-size: var(--text-sm); color: var(--color-text-secondary);">Редактируемая кривая:</label>
+                                    <select id="phoenix-curve-select" style="flex: 1; max-width: 320px;"></select>
+                                </div>
+                                <canvas id="phoenix-cal-canvas" width="600" height="260" style="width: 100%; max-width: 600px; touch-action: none; background: var(--color-bg-tertiary); border-radius: var(--radius-md);"></canvas>
                                 <div id="phoenix-cal-legend" style="font-size: var(--text-xs); color: var(--color-text-tertiary); margin-top: 6px;"></div>
                             </div>
                             <div style="margin-top: 16px; padding: 12px; background: var(--color-info-light); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--color-info);">

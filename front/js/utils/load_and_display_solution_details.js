@@ -1,6 +1,6 @@
 //load_and_display_solution_details.js
 import { apiCall, apiCallWithTimeout } from './api.js';
-import { setCurrentSolutionID } from './upload_file_form.js';
+import { setCurrentSolutionID } from './currentSolution.js';
 import { resetCoarseGenerator } from './dashboardCoarseIntegration.js';
 import { ResultViewer } from './resultViewer.js';
 import { displayReadySolution } from './readySolutionBlock.js';

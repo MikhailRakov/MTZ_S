@@ -3,7 +3,8 @@ import { loadAndDisplaySolutions } from './utils/load_and_display_solutions.js';
 import { updateProfileUI } from './utils/update_profile_ui.js';
 import { openCreateSolutionModal, closeCreateSolutionModal, showCreateSolutionError, hideCreateSolutionError } from './utils/solution_modal_handler.js'
 import { handleFileUpload } from './utils/upload_file_form.js'
-import { initCoarseGenerator, initPhoenixImport } from './utils/dashboardCoarseIntegration.js';
+import { initCoarseGenerator } from './utils/dashboardCoarseIntegration.js';
+import { initPhoenixImport } from './import/phoenix/phoenixImport.js';
 export { currentIDToken}
 
 

@@ -2,9 +2,9 @@
 // Three.js загружается лениво (dynamic import) — только при первом вызове
 // init3DVisualization(). Это экономит ~600 KB в начальной загрузке страницы.
 
-import { loadThree } from './threeLoader.js';
-import { createCoordinateAxes } from './coordinateAxes.js';
-import { calculatePositions as sharedCalculatePositions } from './gridUtils.js';
+import { loadThree } from '../../utils/threeLoader.js';
+import { createCoordinateAxes } from '../../utils/coordinateAxes.js';
+import { calculatePositions as sharedCalculatePositions } from '../../utils/gridUtils.js';
 
 // Defaults for the automatic grid size suggestion.
 // Horizontal cell size is derived from the station spacing, the model boundary

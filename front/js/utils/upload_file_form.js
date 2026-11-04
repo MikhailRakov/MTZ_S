@@ -1,11 +1,8 @@
 import { currentIDToken } from '../main.js';
+import { getCurrentSolutionID } from './currentSolution.js';
 
-let currentSolutionID = null;
-
-export function setCurrentSolutionID(id) {
-    currentSolutionID = id;
-    console.log(`[MAIN] currentSolutionID обновлен на: ${id}`);
-}
+// Совместимость: исторически setCurrentSolutionID экспортировался отсюда
+export { setCurrentSolutionID } from './currentSolution.js';
 
 // Привязываем обработчик программно
 const uploadForm = document.getElementById('file-upload-form');
@@ -43,7 +40,7 @@ export async function handleFileUpload(event) {
         return;
     }
 
-    if (!currentIDToken || !currentSolutionID) {
+    if (!currentIDToken || !getCurrentSolutionID()) {
         showMessage('Ошибка: решение не выбрано или вы не авторизованы.', 'error', uploadMessage);
         return;
     }
@@ -74,7 +71,7 @@ export async function handleFileUpload(event) {
         const formData = new FormData();
         formData.append('file', zipFile);
 
-        const response = await fetch(`/api/users/self/solutions/${currentSolutionID}/upload`, {
+        const response = await fetch(`/api/users/self/solutions/${getCurrentSolutionID()}/upload`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${currentIDToken}`,

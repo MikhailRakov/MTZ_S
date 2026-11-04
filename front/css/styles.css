@@ -1443,6 +1443,57 @@ textarea:focus {
     margin-bottom: var(--spacing-lg);
 }
 
+/* Карта станций наблюдений Phoenix (Leaflet загружается лениво) */
+.phoenix-station-map {
+    height: 260px;
+    width: 100%;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-secondary);
+    position: relative;
+    z-index: 0; /* не перекрывать sticky-шапку дашборда */
+}
+
+.phoenix-station-map .phoenix-map-fallback-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: var(--spacing-md);
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--color-text-tertiary);
+}
+
+.phoenix-station-map .leaflet-container {
+    font: inherit;
+    border-radius: var(--radius-md);
+}
+
+@media (max-width: 768px) {
+    .phoenix-station-map {
+        height: 190px;
+    }
+    .phoenix-station-row {
+        flex-wrap: wrap;
+        gap: 6px !important;
+    }
+    .phoenix-station-row select {
+        max-width: 100% !important;
+        min-height: 44px; /* touch target */
+        font-size: 16px;  /* без авто-зума iOS */
+    }
+    .phoenix-curve-row {
+        flex-wrap: wrap;
+        gap: 6px !important;
+    }
+    .phoenix-curve-row select {
+        max-width: 100% !important;
+        min-height: 44px;
+        font-size: 16px;
+    }
+}
+
 .simpeg-upload-area {
     border: 3px dashed var(--color-primary);
     border-radius: var(--radius-md);

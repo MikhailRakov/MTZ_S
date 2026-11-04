@@ -261,6 +261,72 @@ export function extractStationInfo(tbl) {
 }
 
 // ---------------------------------------------------------------------------
+// Список станций и параметры вида карты
+// ---------------------------------------------------------------------------
+
+/**
+ * Нормализация списка станций из результатов extractStationInfo.
+ * stationId берётся из fileName (тег FILE), при пустом — из fallbackNames[i] (имя TBL-файла).
+ * Записи без id и без координат отбрасываются; дубликаты по stationId — первая побеждает.
+ * @param {Object[]} infos — массив результатов extractStationInfo
+ * @param {string[]} [fallbackNames] — имена файлов по индексу (без пути и расширения)
+ * @returns {{stationId: string, latitude: number|null, longitude: number|null,
+ *            elevation: number|null, declination: number|null, instrument: string|null}[]}
+ */
+export function buildStationList(infos, fallbackNames) {
+    if (!Array.isArray(infos)) return [];
+    const out = [];
+    const seen = new Set();
+    infos.forEach((info, i) => {
+        if (!info) return;
+        let id = String(info.fileName || info.stationId || '').trim();
+        if (!id && Array.isArray(fallbackNames)) {
+            id = String(fallbackNames[i] || '').replace(/\.[^.]+$/, '').trim();
+        }
+        const latitude = Number.isFinite(info.lat) ? info.lat : null;
+        const longitude = Number.isFinite(info.lon) ? info.lon : null;
+        if (!id && latitude == null && longitude == null) return; // не о чём показывать
+        if (id && seen.has(id)) return; // дубль станции
+        if (id) seen.add(id);
+        out.push({
+            stationId: id || `№${out.length + 1}`,
+            latitude,
+            longitude,
+            elevation: Number.isFinite(info.elevationRaw) ? info.elevationRaw : null,
+            declination: Number.isFinite(info.declination) ? info.declination : null,
+            instrument: info.instrument || null,
+        });
+    });
+    return out;
+}
+
+/**
+ * Параметры вида Leaflet-карты для набора станций.
+ * 1 станция → центр на ней, zoom 8. Несколько → центр bbox, zoom по максимальному разбросу:
+ * ≥5°→4, ≥2°→5, ≥0.5°→6, ≥0.1°→7, иначе 8. Станции без координат игнорируются.
+ * @returns {{center: [number, number], zoom: number}|null} null — если валидных станций нет
+ */
+export function mapViewForStations(stations) {
+    if (!Array.isArray(stations)) return null;
+    const pts = stations.filter(s => s
+        && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)
+        && Math.abs(s.latitude) <= 90 && Math.abs(s.longitude) <= 180);
+    if (pts.length === 0) return null;
+    if (pts.length === 1) return { center: [pts[0].latitude, pts[0].longitude], zoom: 8 };
+
+    const lats = pts.map(p => p.latitude);
+    const lons = pts.map(p => p.longitude);
+    const latSpread = Math.max(...lats) - Math.min(...lats);
+    const lonSpread = Math.max(...lons) - Math.min(...lons);
+    const spread = Math.max(latSpread, lonSpread);
+    const zoom = spread >= 5 ? 4 : spread >= 2 ? 5 : spread >= 0.5 ? 6 : spread >= 0.1 ? 7 : 8;
+    return {
+        center: [(Math.min(...lats) + Math.max(...lats)) / 2, (Math.min(...lons) + Math.max(...lons)) / 2],
+        zoom,
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Калибровочные файлы .CLC / .CLB / .CLE
 // ---------------------------------------------------------------------------
 
@@ -268,25 +334,39 @@ const CAL_HEADER_SIZE = 132;
 
 /**
  * Определение размера строки таблицы калибровки (32 или 128 байт).
- * Признак: первый байт каждой строки ∈ {3,4,5}, байты [1..2] = 0.
+ * Признак: первый байт каждой строки ∈ {2,3,4,5}, байты [1..2] = 0.
+ * Тип 2 — вспомогательные данные (доп. таблица после основной), тоже валиден.
+ * Выбор: предпочитаем stride с наибольшим числом подряд валидных строк от начала.
  * @param {Uint8Array} bytes
  * @returns {32|128|null}
  */
 function detectCalRowSize(bytes) {
+    const VALID_TYPES = new Set([2, 3, 4, 5]);
+    let bestSize = null;
+    let bestConsec = 0;
+
     for (const rowSize of [32, 128]) {
         const body = bytes.byteLength - CAL_HEADER_SIZE;
         if (body <= 0 || body % rowSize !== 0) continue;
-        let ok = true;
-        for (let off = CAL_HEADER_SIZE; off < bytes.byteLength; off += rowSize) {
+        const nrows = body / rowSize;
+        // Считаем подряд валидные строки от начала
+        let consec = 0;
+        for (let i = 0; i < nrows; i++) {
+            const off = CAL_HEADER_SIZE + i * rowSize;
             const t = bytes[off];
-            if ((t !== 3 && t !== 4 && t !== 5) || bytes[off + 1] !== 0 || bytes[off + 2] !== 0) {
-                ok = false;
+            if (VALID_TYPES.has(t) && bytes[off + 1] === 0 && bytes[off + 2] === 0) {
+                consec++;
+            } else {
                 break;
             }
         }
-        if (ok) return rowSize;
+        // Требуем хотя бы 4 валидные строки подряд и ≥50% от общего числа
+        if (consec >= 4 && consec >= nrows * 0.5 && consec > bestConsec) {
+            bestConsec = consec;
+            bestSize = rowSize;
+        }
     }
-    return null;
+    return bestSize;
 }
 
 /**
@@ -382,10 +462,11 @@ export function calResponseCurves(cal) {
  * @returns {Object<string,string[]>} карта канал→имена файлов-кандидатов
  */
 export function matchCalFiles(calFileNames, stationInfo) {
+    const rawTags = (stationInfo && stationInfo.rawTags) || {};
     const wanted = {
-        Hx: str(stationInfo.rawTags, 'HXSN'),
-        Hy: str(stationInfo.rawTags, 'HYSN'),
-        Hz: str(stationInfo.rawTags, 'HZSN'),
+        Hx: str(rawTags, 'HXSN'),
+        Hy: str(rawTags, 'HYSN'),
+        Hz: str(rawTags, 'HZSN'),
     };
     const result = { Hx: [], Hy: [], Hz: [], unmatched: [] };
     const used = new Set();
