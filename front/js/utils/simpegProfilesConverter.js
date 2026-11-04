@@ -473,7 +473,7 @@ function countAirLayersTop(model) {
     const { sigma, hx, hy, hz } = model;
     const nX = hx.length, nY = hy.length, nZ = hz.length;
     let air = 0;
-    for (let k = nZ - 1; k >= 0; k--) {          // k — индекс .npz (снизу вверх), идём с верха
+    for (let k = 0; k < nZ; k++) {                // k=0 — верхний слой (top-to-bottom)
         let allAir = true;
         for (let j = 0; j < nY && allAir; j++) {
             for (let i = 0; i < nX && allAir; i++) {
@@ -497,9 +497,11 @@ export function simpegSurface(npz) {
     if (!npz.model) return { zSurface: 0, airLayers: 0 };
     const { hz, origin } = npz.model;
     const airLayers = countAirLayersTop(npz.model);
-    const nGround = hz.length - airLayers;
+    // Ground слои идут после воздушных: hz[airLayers .. nZ-1]
     let ground = 0;
-    for (let k = 0; k < nGround; k++) ground += hz[k];
+    for (let k = airLayers; k < hz.length; k++) ground += hz[k];
+    // zSurface = origin[2] + толщина всех подземных слоёв
+    // (origin[2] — дно модели в SimPEG; при top-to-bottom hz это нижняя граница)
     const zSurface = origin ? (origin[2] || 0) + ground : 0;
     return { zSurface, airLayers };
 }
@@ -528,14 +530,16 @@ export function buildCoarseFromSimpeg(npz) {
         throw new Error('В сетке .npz нет подповерхностных слоёв (весь объём — воздух)');
     }
 
-    // z сверху вниз: k = nGround-1 .. 0 (индексы .npz идут снизу вверх)
+    // z сверху вниз: k = 0 .. nGround-1
+    // В .npz hz[0] = верхний слой (top-to-bottom), поэтому прямой порядок
+    // даёт Coarse.dat с тонкими слоями у поверхности и толстыми на глубине.
     const zCells = [];
-    for (let k = nGround - 1; k >= 0; k--) zCells.push(hz[k]);
+    for (let k = 0; k < nGround; k++) zCells.push(hz[k]);
 
     // rho[kTop][j][i]; воздух/NaN/σ≤0 внутри земли → фоновое значение
     let backgroundFilled = 0;
     const grid = [];
-    for (let k = nGround - 1; k >= 0; k--) {
+    for (let k = 0; k < nGround; k++) {
         const layer = [];
         for (let j = 0; j < nY0; j++) {
             const row = [];
@@ -692,16 +696,17 @@ export function buildSimpegModelData(npz) {
     const nZ = hz.length;
 
     // top -> bottom для зрителя (k=0 — поверхность)
+    // В .npz hz[0] = верхний слой, поэтому прямой порядок = сверху вниз.
     const zCells = [];
-    for (let k = nZ - 1; k >= 0; k--) zCells.push(hz[k]);
+    for (let k = 0; k < nZ; k++) zCells.push(hz[k]);
 
     // sigma в .npz хранится в порядке Fortran (x быстрее всего):
-    // idx = i + j*nX + k*nX*nY, k=0 — НИЖНИЙ слой; зрителю нужен idx
-    // k*nX*nY + j*nX + i с k сверху вниз, т.е. k_viewer -> k = nZ-1-k_viewer
+    // idx = i + j*nX + k*nX*nY, k=0 — ВЕРХНИЙ слой; зрителю нужен idx
+    // k*nX*nY + j*nX + i с k сверху вниз, т.е. k_viewer = k (прямой порядок)
     const AIR_RHO_CUT = 1e6;
     let rhoValues = new Array(nX * nY * nZ);
     for (let kv = 0; kv < nZ; kv++) {
-        const k = nZ - 1 - kv;
+        const k = kv;
         for (let j = 0; j < nY; j++) {
             for (let i = 0; i < nX; i++) {
                 const s = sigma[i + j * nX + k * nX * nY];
