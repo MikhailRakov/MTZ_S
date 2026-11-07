@@ -450,6 +450,54 @@ export function calResponseCurves(cal) {
     });
 }
 
+/**
+ * Разбиение файла калибровки на отдельные кривые отклика по типу строки.
+ *
+ * В одном файле калибровки содержатся НЕСКОЛЬКО независимых кривых
+ * (в файлах Phoenix это sweep'ы разных типов: type 2..5). Каждая из них
+ * покрывает один и тот же диапазон частот, поэтому при склейке всех строк
+ * в одну кривую одна частота получала бы несколько значений y.
+ *
+ * Каждая кривая возвращается как отдельный набор точек, отсортированный
+ * по возрастанию частоты (то есть кривая — функция y(x)).
+ *
+ * @param {{rows:Array}} cal результат parseCalFile
+ * @returns {Array<{type:number, points:Array<{freqHz:number, amp:number,
+ *                  phase:number, re:number, im:number, groups:number[][]}>}>}
+ *          массив кривых, отсортированный по типу
+ */
+export function calResponseCurvesByType(cal) {
+    if (!cal || !Array.isArray(cal.rows)) return [];
+
+    const byType = new Map();
+    for (const r of cal.rows) {
+        const type = Number(r.type);
+        const groups = [];
+        for (let g = 0; g + 6 <= r.values.length; g += 6) {
+            groups.push(r.values.slice(g, g + 6));
+        }
+        const first = groups[0] || r.values;
+        const point = {
+            freqHz: r.freqHz,
+            periodUs: r.periodUs,
+            amp: first[4],
+            phase: first[5],
+            re: first[0],
+            im: first[1],
+            groups,
+        };
+        if (!byType.has(type)) byType.set(type, []);
+        byType.get(type).push(point);
+    }
+
+    return [...byType.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([type, points]) => ({
+            type,
+            points: points.slice().sort((a, b) => a.freqHz - b.freqHz),
+        }));
+}
+
 // ---------------------------------------------------------------------------
 // Вспомогательное: сопоставление датчиков станции и калибровочных файлов
 // ---------------------------------------------------------------------------

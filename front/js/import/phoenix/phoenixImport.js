@@ -1,8 +1,72 @@
 // Import UI: сырые данные Phoenix MT (.zip с .TBL + Cal/*)
-import { parseTbl, extractStationInfo, parseCalFile, calResponseCurves, buildStationList } from './phoenixParser.js';
+import { parseTbl, extractStationInfo, parseCalFile, calResponseCurvesByType, buildStationList } from './phoenixParser.js';
+import { smoothCurve } from './curveSmoothing.js';
 import { stationPlotLayout, findNearestStationPoint, drawStationPlot } from './stationPlot.js';
 import { showHint } from '../../utils/onboardingHints.js';
 import { getCurrentSolutionID } from '../../utils/currentSolution.js';
+import { getCurrentToken } from '../../utils/currentToken.js';
+
+/**
+ * Трансформация вывода calResponseCurves() в формат drawCalCurves().
+ * calResponseCurves → [{freqHz, amp, phase, re, im, groups}, ...]
+ * drawCalCurves ожидает → {frequencies: [], amplitudes: [], phases: []}
+ *
+ * Дополнительно кривая обрабатывается статистически (smoothCurve):
+ *  - точки с одинаковой частотой склеиваются → кривая становится функцией y(x);
+ *  - амплитуда и фаза сглаживаются локальной МНК-аппроксимацией
+ *    (робастные веса по остаткам).
+ *
+ * @param {Array<{freqHz:number, amp:number, phase:number}>} curvesFromParser
+ * @param {object} [opts] параметры сглаживания (см. smoothCurve)
+ * @returns {{frequencies:number[], amplitudes:number[], phases:number[]}}
+ */
+export function transformCurvesForCanvas(curvesFromParser, opts = {}) {
+    if (!curvesFromParser || curvesFromParser.length === 0) {
+        return { frequencies: [], amplitudes: [], phases: [] };
+    }
+    return smoothCurve({
+        frequencies: curvesFromParser.map(c => c.freqHz),
+        amplitudes: curvesFromParser.map(c => c.amp),
+        phases: curvesFromParser.map(c => c.phase),
+    }, opts);
+}
+
+/**
+ * Разбор файла калибровки на отдельные кривые отклика со статистической
+ * обработкой каждой кривой.
+ *
+ * В одном файле калибровки Phoenix содержится несколько независимых кривых
+ * (разделены типом строки: type 2..5). Каждая из них покрывает один и тот же
+ * диапазон частот, поэтому их нельзя склеивать в одну кривую — иначе одна
+ * частота получала бы несколько значений y.
+ *
+ * Для каждой кривой выполняется:
+ *  - очистка (пропуск нечисловых значений);
+ *  - склейка точек с одинаковой частотой (кривая становится функцией y(x));
+ *  - сглаживание локальной МНК (квадратичный полином, робастные веса);
+ *  - фаза разворачивается перед сглаживанием и сворачивается обратно.
+ *
+ * @param {{rows:Array}} cal результат parseCalFile
+ * @param {object} [opts] параметры сглаживания (см. smoothCurve)
+ * @returns {Array<{type:number, label:string, frequencies:number[],
+ *                  amplitudes:number[], phases:number[]}>}
+ */
+export function transformCalCurves(cal, opts = {}) {
+    const byType = calResponseCurvesByType(cal);
+    const out = [];
+    for (const group of byType) {
+        const curve = transformCurvesForCanvas(group.points, opts);
+        if (curve.frequencies.length === 0) continue;
+        out.push({
+            type: group.type,
+            label: `тип ${group.type}`,
+            frequencies: curve.frequencies,
+            amplitudes: curve.amplitudes,
+            phases: curve.phases,
+        });
+    }
+    return out;
+}
 
 /** Состояние редактора калибровочных кривых (модульный уровень для доступа из resetPhoenixUI) */
 let _calEditorState = null;
@@ -429,11 +493,10 @@ export function initPhoenixImport() {
                 try {
                     const calBuffer = await zip.file(calPath).async('arraybuffer');
                     const calData = parseCalFile(calBuffer);
-                    const curves = calResponseCurves(calData);
+                    const curves = transformCalCurves(calData);
                     if (curves && curves.length > 0) {
                         const fileName = calPath.split('/').pop() || calPath;
-                        const transformed = transformCurvesForCanvas(curves);
-                        calCurvesList.push({ name: fileName, curves: [transformed] });
+                        calCurvesList.push({ name: fileName, curves });
                     }
                 } catch (err) {
                     console.warn(`[PHOENIX] Failed to parse cal file ${calPath}:`, err);
@@ -634,22 +697,6 @@ export function initPhoenixImport() {
     }
 
     /**
-     * Трансформация вывода calResponseCurves() в формат drawCalCurves().
-     * calResponseCurves → [{freqHz, amp, phase, re, im, groups}, ...]
-     * drawCalCurves ожидает → {frequencies: [], amplitudes: [], phases: []}
-     */
-    function transformCurvesForCanvas(curvesFromParser) {
-        if (!curvesFromParser || curvesFromParser.length === 0) {
-            return { frequencies: [], amplitudes: [], phases: [] };
-        }
-        return {
-            frequencies: curvesFromParser.map(c => c.freqHz),
-            amplitudes: curvesFromParser.map(c => c.amp),
-            phases: curvesFromParser.map(c => c.phase),
-        };
-    }
-
-    /**
      * Отрисовка калибровочных кривых на canvas.
      */
     function drawCalCurves(curvesList) {
@@ -783,7 +830,9 @@ export function initPhoenixImport() {
                     ctx.setLineDash([]);
                 }
 
-                legendParts.push(`<span style="color:${color};">■</span> ${ci === selectedCurveIdx ? '✏️ ' : ''}${entry.name}`);
+                // Подпись: имя файла + тип кривой (в одном файле несколько кривых).
+                const curveLabel = curve.label ? ` ${curve.label}` : '';
+                legendParts.push(`<span style="color:${color};">■</span> ${ci === selectedCurveIdx ? '✏️ ' : ''}${entry.name}${curveLabel}`);
             }
         }
         ctx.globalAlpha = 1;
@@ -1090,9 +1139,12 @@ export function initPhoenixImport() {
             return;
         }
 
-        const token = localStorage.getItem('authToken');
+        // Токен сессии берём из общего источника (main.js пишет его при входе).
+        // В localStorage ключа 'authToken' никогда не было, поэтому кнопка
+        // «Отправить» всегда отвечала «Необходима авторизация».
+        const token = getCurrentToken();
         if (!token) {
-            showMessage('Необходима авторизация', 'error');
+            showMessage('Сессия не авторизована: обновите страницу и войдите в систему.', 'error');
             return;
         }
 

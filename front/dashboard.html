@@ -32,6 +32,8 @@
         </div>
         <h1 class="header-title">3D MT Inversion</h1>
         <div class="header-right">
+            <!-- Переключатель языка интерфейса (ru/en/zh/ja) — см. js/i18n/i18n.js -->
+            <div class="lang-switch-mount"></div>
             <!-- Статистика очереди: активные серверы расчёта + задачи в очереди.
                  Опрос /api/system/stats каждые 10 с — см. initQueueStatsWidget в main.js -->
             <div id="queue-stats-widget" class="queue-stats-widget" title="Статистика очереди расчётов">
@@ -424,6 +426,7 @@
         </div>
     </div>
 
+    <script type="module" src="/js/i18n/i18n.js"></script>
     <script type="module" src="/js/main.js"></script>
 </body>
 
