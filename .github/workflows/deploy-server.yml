@@ -51,7 +51,7 @@ jobs:
           echo "${{ secrets.CONFIG_YML_BASE64 }}" | base64 -d > ~/mtz-server/secrets/config.yml
           chmod 600 ~/mtz-server/secrets/config.yml
           
-          echo "✅ Verifying files..."
+          echo " Verifying files..."
           file ~/mtz-server/secrets/serviceAccountKey.json
           file ~/mtz-server/secrets/config.yml
 
@@ -90,7 +90,7 @@ jobs:
             -v ~/mtz-server/logs:/app/logs \
             "$IMAGE"
             
-          echo "✅ Контейнер запущен. Проверка статуса:"
+          echo " Контейнер запущен. Проверка статуса:"
           docker ps -a --filter "name=mtz-server" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
 
       # 7. Проверка

@@ -24,6 +24,12 @@ import (
 // повтор происходит при следующем обращении.
 var reconnectPauses = []time.Duration{0, time.Second, 2 * time.Second}
 
+// Имена очередей (единый источник для сервера и потребителей).
+const (
+	// QueueCalculation — очередь инверсии (существующий потребитель MTZ_MSQ).
+	QueueCalculation = "calculation_tasks"
+)
+
 // Manager — потокобезопасный провайдер соединения с RabbitMQ.
 // Channel() всегда возвращает живой канал: если прежнее соединение закрыто,
 // оно пересоздаётся (вместе с декларированием очереди).
@@ -82,11 +88,11 @@ func (m *Manager) reconnectLocked() (*amqp.Channel, error) {
 			continue
 		}
 		// Очередь декларируется идемпотентно: это переживает и перезапуск
-		// брокера (durable), и смену соединения
+		// брокера (durable), и смену соединения.
 		if _, err := ch.QueueDeclare(m.queueName, true, false, false, false, nil); err != nil {
+			lastErr = err
 			_ = ch.Close()
 			_ = conn.Close()
-			lastErr = err
 			continue
 		}
 		m.conn, m.ch = conn, ch

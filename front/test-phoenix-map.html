@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Smoke: Phoenix схема станций + выбор кривой</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>body { font-family: sans-serif; margin: 20px; } #status { white-space: pre-wrap; font-family: monospace; background:#f4f4f4; padding:8px; }</style>
+</head>
+<body>
+    <h3>Smoke-тест: схема расположения станций + выбор кривой (реальная разметка dashboard.html)</h3>
+    <div id="status">init…</div>
+    <div id="phoenix-host"></div>
+
+    <script type="module">
+        const status = document.getElementById('status');
+        const log = (m) => { status.textContent += '\n' + m; console.log('[SMOKE]', m); };
+
+        // 1. Встраиваем реальный #tab-phoenix из dashboard.html (гарантия паритета разметки)
+        const dashText = await (await fetch('/front/dashboard.html')).text();
+        const doc = new DOMParser().parseFromString(dashText, 'text/html');
+        const tabPhoenix = doc.getElementById('tab-phoenix');
+        const host = document.getElementById('phoenix-host');
+        host.appendChild(document.adoptNode(tabPhoenix));
+        host.querySelector('#phoenix-preview').classList.remove('hidden');
+        log('markup adopted: ' + !!host.querySelector('#phoenix-station-map'));
+
+        // 2. Подготовим zip из реальных файлов
+        const zip = new JSZip();
+        for (const p of ['mt_time_data/DATA/1369712A.TBL', 'mt_time_data/DATA/Startup.tbl',
+                         'mt_time_data/Cal/COIL2430.CLC', 'mt_time_data/Cal/COIL2429.CLC']) {
+            const r = await fetch('/' + p);
+            if (r.ok) zip.file(p.split('/').slice(-2).join('/'), await r.arrayBuffer());
+            else log('MISSING ' + p);
+        }
+        const blob = await zip.generateAsync({ type: 'blob' });
+
+        // 3. Импортируем реальный модуль и инициируем
+        const mod = await import('/front/js/import/phoenix/phoenixImport.js');
+        mod.initPhoenixImport();
+        log('initPhoenixImport called; exports: buildCurveOptions=' + typeof mod.buildCurveOptions);
+
+        // 4. Кормим zip через input.files (DataTransfer) + change
+        const input = host.querySelector('#phoenix-file-input');
+        const file = new File([blob], 'test_station.zip', { type: 'application/zip' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // 5. Ждём завершения обработки (handlePhoenixZip асинхронный)
+        await new Promise(res => setTimeout(res, 1500));
+
+        // 6. Проверки
+        const stSel = host.querySelector('#phoenix-station-select');
+        const stRow = host.querySelector('.phoenix-station-row');
+        const curSel = host.querySelector('#phoenix-curve-select');
+        const info = host.querySelector('#phoenix-station-info');
+        const map = host.querySelector('#phoenix-station-map');
+        const canvas = host.querySelector('#phoenix-cal-canvas');
+
+        log('station options: ' + stSel.options.length + ' → ' + [...stSel.options].map(o => o.text).join(', '));
+        log('station row visible (2 станции → да): ' + (stRow.style.display !== 'none'));
+        log('info содержит координаты: ' + /56\.28/.test(info.textContent));
+        log('curve options: ' + curSel.options.length + ' → ' + [...curSel.options].map(o => o.text).join(' | '));
+        log('canvas нарисован (есть пикселы не фона): ' + (() => {
+            const ctx = canvas.getContext('2d');
+            const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            for (let i = 3; i < d.length; i += 4000) if (d[i] > 0) return true;
+            return false;
+        })());
+        log('схема станций: canvas создан: ' + (!!map.querySelector('canvas.phoenix-station-plot')));
+        log('схема нарисована (есть пиксели не фона): ' + (() => {
+            const sc = map.querySelector('canvas.phoenix-station-plot');
+            if (!sc) return 'нет canvas';
+            const sctx = sc.getContext('2d', { willReadFrequently: true });
+            const sd = sctx.getImageData(0, 0, sc.width, sc.height).data;
+            let n = 0;
+            for (let i = 3; i < sd.length; i += 4) if (sd[i] > 0) n++;
+            return n > 100 ? 'да (' + n + ' px)' : 'нет (' + n + ' px)';
+        })());
+        log('leaflet не используется (window.L=' + typeof window.L + ')');
+        log('схема: размер canvas (device px): ' + (() => {
+            const sc = map.querySelector('canvas.phoenix-station-plot');
+            return sc ? sc.width + 'x' + sc.height : 'нет canvas';
+        })());
+        log('подпись «без координат»: ' + (host.querySelector('#phoenix-station-plot-note')?.textContent || '(нет)'));
+
+        // 7. Выбор конкретной кривой → событие change не должно ронять редактор
+        if (curSel.options.length > 1) {
+            curSel.value = '1';
+            curSel.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 200));
+            log('после выбора кривы 1: холст перерисован ✓ (без исключений)');
+        }
+
+        // 8. Переключение станции через select
+        if (stSel.options.length > 1) {
+            stSel.value = '1';
+            stSel.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 200));
+            const latV = host.querySelector('#phoenix-lat').value;
+            log('после selectStation(1): lat=' + JSON.stringify(latV) + ' (Startup без координат → пусто: ' + (latV === '') + ')');
+        }
+        log('DONE');
+    </script>
+</body>
+</html>

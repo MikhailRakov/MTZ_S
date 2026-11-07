@@ -240,7 +240,7 @@ function getStatusIcon(status) {
         case 'completed':
         case 'success':
         case 'finished':
-            return '✅';
+            return '';
         case 'running':
         case 'processing':
         case 'in_progress':
@@ -256,7 +256,7 @@ function getStatusIcon(status) {
         case 'canceled':
             return '🚫';
         default:
-            return '❓';
+            return '';
     }
 }
 

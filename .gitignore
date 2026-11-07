@@ -10,3 +10,7 @@ simpeg_test/libs/
 simpeg_test/output/
 simpeg_test/*.npz 
 AP3DMT_RB
+mt_time_data
+MT_data_C_flash
+.tmp_analysis
+.tmp_dbg.mjs

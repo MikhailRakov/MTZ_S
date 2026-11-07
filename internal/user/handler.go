@@ -844,10 +844,15 @@ func (h *handler) GetSolutionStatus(w http.ResponseWriter, r *http.Request, ps h
 	w.Write(body)
 }
 
-// publishTask публикует сообщение задачи в очередь с одной повторной
+// publishTask публикует сообщение задачи в очередь инверсии с одной повторной
 // попыткой: если канал умер прямо во время публикации, Manager при втором
 // обращении переподключится.
 func (h *handler) publishTask(ctx context.Context, body []byte) error {
+	return h.publishToQueue(ctx, body, rabbitmq.QueueCalculation)
+}
+
+// publishToQueue публикует сообщение в произвольную очередь (с одним ретраем).
+func (h *handler) publishToQueue(ctx context.Context, body []byte, queue string) error {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		ch, err := h.rabbit.Channel()
@@ -858,9 +863,9 @@ func (h *handler) publishTask(ctx context.Context, body []byte) error {
 		err = ch.PublishWithContext(
 			pubCtx,
 			"",
-			"calculation_tasks", // routing key (имя вашей очереди)
-			false,               // mandatory
-			false,               // immediate
+			queue, // routing key (имя очереди)
+			false, // mandatory
+			false, // immediate
 			amqp.Publishing{
 				ContentType: "application/json",
 				Body:        body,
@@ -873,7 +878,7 @@ func (h *handler) publishTask(ctx context.Context, body []byte) error {
 			return nil
 		}
 		lastErr = err
-		h.logger.Errorf("Publish attempt %d failed: %v", attempt+1, err)
+		h.logger.Errorf("Publish attempt %d to %q failed: %v", attempt+1, queue, err)
 	}
 	return lastErr
 }
@@ -887,7 +892,7 @@ func (h *handler) inspectQueue() (amqp.Queue, error) {
 		if err != nil {
 			return amqp.Queue{}, err
 		}
-		q, err := ch.QueueInspect("calculation_tasks")
+		q, err := ch.QueueInspect(rabbitmq.QueueCalculation)
 		if err == nil {
 			return q, nil
 		}
@@ -954,3 +959,4 @@ func (h *handler) Register(router *httprouter.Router) {
 	// === СИСТЕМНЫЕ МАРШРУТЫ ===
 	router.GET("/api/system/stats", h.GetQueueStats)
 }
+

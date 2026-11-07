@@ -4,6 +4,8 @@ import { updateProfileUI } from './utils/update_profile_ui.js';
 import { openCreateSolutionModal, closeCreateSolutionModal, showCreateSolutionError, hideCreateSolutionError } from './utils/solution_modal_handler.js'
 import { handleFileUpload } from './utils/upload_file_form.js'
 import { initCoarseGenerator } from './utils/dashboardCoarseIntegration.js';
+import { initPhoenixImport } from './import/phoenix/phoenixImport.js';
+import { setCurrentToken } from './utils/currentToken.js';
 export { currentIDToken}
 
 
@@ -68,6 +70,7 @@ if (auth) {
                 .then((idToken) => {
                     console.log("[TOKEN] Получен ID токен");
                     currentIDToken = idToken;
+                    setCurrentToken(idToken);
 
                     return fetch('/api/users/self', {
                         method: 'POST',
@@ -311,6 +314,9 @@ window.requestDownload = async function(s3Key) {
 
 // Initialize Coarse Generator
 initCoarseGenerator();
+
+// Initialize Phoenix Import
+initPhoenixImport();
 
 // === Queue Stats Widget (active consumers from RabbitMQ) ===
 (function initQueueStatsWidget() {

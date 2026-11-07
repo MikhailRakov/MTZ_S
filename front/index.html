@@ -12,12 +12,15 @@
 <body>
     <div class="container-login">
         <div class="login-card">
+            <!-- Переключатель языка интерфейса (ru/en/zh/ja) — см. js/i18n/i18n.js -->
+            <div class="lang-switch-mount login-lang-switch"></div>
             <div class="loading-spinner" style="margin: 0 auto 24px;"></div>
             <h2 style="color: var(--color-text-secondary); font-weight: 400;">Проверка аутентификации...</h2>
             <p style="color: var(--color-text-tertiary); font-size: 14px;">Пожалуйста, подождите</p>
         </div>
     </div>
 
+    <script type="module" src="/js/i18n/i18n.js"></script>
     <script src="/js/config/firebase-config.js"></script>
 
     <script>

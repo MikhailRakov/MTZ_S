@@ -108,7 +108,7 @@
     }
     </script>
     <script type="module">
-        import { CoarseGenerator } from './js/utils/coarseGenerator.js';
+        import { CoarseGenerator } from './js/import/profiles/coarseGenerator.js';
 
         const logEl = document.getElementById('log');
         let generator = new CoarseGenerator();
@@ -118,7 +118,7 @@
 
         function log(msg, type = 'info') {
             const time = new Date().toLocaleTimeString();
-            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '' : 'ℹ️';
             logEl.innerHTML += `<div>${prefix} [${time}] ${msg}</div>`;
             logEl.scrollTop = logEl.scrollHeight;
             console.log(`[${type.toUpperCase()}] ${msg}`);
@@ -145,7 +145,7 @@
                 profilesStats = generator.parseProfilesData(profilesData);
 
                 setStatus(document.getElementById('load-status'),
-                    `✅ Loaded: ${profilesStats.numStations} stations, ${profilesStats.numPeriods} periods<br>` +
+                    ` Loaded: ${profilesStats.numStations} stations, ${profilesStats.numPeriods} periods<br>` +
                     `X: ${(profilesStats.xRange/1000).toFixed(1)} km, Y: ${(profilesStats.yRange/1000).toFixed(1)} km`,
                     'success');
 
@@ -184,7 +184,7 @@
                 generator.init3DVisualization(container, coarseData, profilesStats);
 
                 setStatus(document.getElementById('generate-status'),
-                    `✅ Grid generated: ${config.nX}×${config.nY}×${config.nZ} = ${(config.nX*config.nY*config.nZ).toLocaleString()} cells`,
+                    ` Grid generated: ${config.nX}×${config.nY}×${config.nZ} = ${(config.nX*config.nY*config.nZ).toLocaleString()} cells`,
                     'success');
                 document.getElementById('download-btn').disabled = false;
                 log(`Grid generated successfully`, 'success');
@@ -201,7 +201,7 @@
 
             try {
                 generator.downloadCoarse('Coarse.dat');
-                setStatus(document.getElementById('viz-status'), '✅ File downloaded successfully!', 'success');
+                setStatus(document.getElementById('viz-status'), ' File downloaded successfully!', 'success');
                 log('Download successful', 'success');
             } catch (e) {
                 setStatus(document.getElementById('viz-status'), `Download error: ${e.message}`, 'error');
